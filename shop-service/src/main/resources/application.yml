@@ -1,0 +1,15 @@
+server:
+  port: 8081
+
+spring:
+  application:
+    name: shop-service
+  config:
+    # Docker secrets are mounted as files in /run/secrets; each file becomes a property
+    # named after the file (e.g. shop_api_password).
+    import: optional:configtree:/run/secrets/
+
+api:
+  auth:
+    username: ${SHOP_API_USERNAME:shop-client}
+    password: ${shop_api_password:}

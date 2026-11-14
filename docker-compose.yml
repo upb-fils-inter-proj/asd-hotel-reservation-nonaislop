@@ -1,0 +1,53 @@
+# Run ./scripts/generate-secrets.sh once before the first `docker compose up --build`.
+name: hotel-reservation
+
+services:
+  hotel-management-service:
+    build:
+      context: .
+      dockerfile: hotel-management-service/Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      SHOP_SERVICE_URL: http://shop-service:8081
+      PAYMENT_SERVICE_URL: http://payment-service:8082
+      HOTEL_API_USERNAME: front-desk
+      SHOP_API_USERNAME: shop-client
+      PAYMENT_API_USERNAME: payment-client
+    secrets:
+      - hotel_api_password      # its own API
+      - shop_api_password       # to call the shop service
+      - payment_api_password    # to call the payment service
+    depends_on:
+      - shop-service
+      - payment-service
+
+  shop-service:
+    build:
+      context: .
+      dockerfile: shop-service/Dockerfile
+    ports:
+      - "8081:8081"
+    environment:
+      SHOP_API_USERNAME: shop-client
+    secrets:
+      - shop_api_password
+
+  payment-service:
+    build:
+      context: .
+      dockerfile: payment-service/Dockerfile
+    ports:
+      - "8082:8082"
+    environment:
+      PAYMENT_API_USERNAME: payment-client
+    secrets:
+      - payment_api_password
+
+secrets:
+  hotel_api_password:
+    file: ./secrets/hotel_api_password.txt
+  shop_api_password:
+    file: ./secrets/shop_api_password.txt
+  payment_api_password:
+    file: ./secrets/payment_api_password.txt

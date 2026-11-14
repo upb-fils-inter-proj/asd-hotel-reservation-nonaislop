@@ -1,64 +1,124 @@
 # Hotel Management and Reservation System — Java Proof of Concept
 
-A small Java proof of concept demonstrating six design patterns from the UML design:
+Three Spring Boot microservices (hotel management, shop, payment), each built with clean
+architecture, demonstrating six design patterns from the UML design:
 Strategy, Decorator, State, Observer, Adapter, and Facade.
 
 ## Requirements
-- JDK 21 (see `maven.compiler.source` in `pom.xml`)
-- Maven (or any IDE that can build a Maven project)
-- No external libraries or database required
+- Docker with Compose, to run the services
+- JDK 21 and Maven 3.9, to build and test locally (IntelliJ's bundled Maven works)
 
-## Build and run
+## Run with Docker Compose
 
-Compile and run the demo with Maven:
+Create the API passwords once (they go to `secrets/`, which is git-ignored):
 
 ```bash
-mvn compile
-java -cp target/classes org.nightking.Main
+./scripts/generate-secrets.sh
 ```
 
-Or run `org.nightking.Main` directly from your IDE.
+Build and start the three services:
+
+```bash
+docker compose up --build
+```
+
+| Service | Port | API user | Password secret |
+|---|---|---|---|
+| `hotel-management-service` | 8080 | `front-desk` | `secrets/hotel_api_password.txt` |
+| `shop-service` | 8081 | `shop-client` | `secrets/shop_api_password.txt` |
+| `payment-service` | 8082 | `payment-client` | `secrets/payment_api_password.txt` |
+
+## Try the API
+
+```bash
+HOTEL_PW=$(cat secrets/hotel_api_password.txt)
+```
+
+Book room 204 (the hotel service asks the shop for the price and the payment service to charge):
+
+```bash
+curl -u "front-desk:$HOTEL_PW" -H 'Content-Type: application/json' -X POST http://localhost:8080/api/reservations -d '{"guest":{"id":"G-01","name":"Alex Morgan","email":"alex@example.com","phone":"+40123456789"},"roomNumber":"204","checkIn":"2026-12-10","checkOut":"2026-12-13","breakfast":true,"spa":true,"airportTransfer":false}'
+```
+
+Check in and check out (use the `reservationId` from the booking response):
+
+```bash
+curl -u "front-desk:$HOTEL_PW" -X POST http://localhost:8080/api/reservations/RES-1000/check-in
+```
+
+```bash
+curl -u "front-desk:$HOTEL_PW" -X POST http://localhost:8080/api/reservations/RES-1000/check-out
+```
+
+| Route | Success | Errors |
+|---|---|---|
+| `POST /api/reservations` (hotel) | `201` reservation (`CONFIRMED`, or `PENDING` if payment was declined) | `400` invalid request, `404` unknown room, `409` room not available |
+| `POST /api/reservations/{id}/check-in` | `200` reservation | `404` unknown reservation, `409` wrong state |
+| `POST /api/reservations/{id}/check-out` | `200` reservation | `404` unknown reservation, `409` wrong state |
+| `POST /api/shop/quotes` (shop) | `200` total, currency, breakdown | `400` invalid request |
+| `POST /api/payments` (payment) | `200` status `APPROVED` or `DECLINED` | `400` invalid request |
+
+Every route needs HTTP Basic credentials; without them the answer is `401`.
+
+## Authentication and secrets
+- Each service protects its whole API with HTTP Basic auth and one API user.
+- Passwords are Docker secrets: Compose mounts them at `/run/secrets/<name>`, and Spring reads
+  that folder as configuration (`spring.config.import: configtree:/run/secrets/`).
+- Each container only gets the secrets it needs. The hotel management service also gets the
+  shop and payment passwords, because it calls those services.
+- A service refuses to start if its password is missing.
+- To rotate a password: delete its file in `secrets/`, run `./scripts/generate-secrets.sh`,
+  then `docker compose up -d --force-recreate`.
+
+## Run without Docker
+
+```bash
+mvn package
+```
+
+Start each jar with its password in the environment, for example:
+
+```bash
+shop_api_password=$(cat secrets/shop_api_password.txt) java -jar shop-service/target/shop-service.jar
+```
+
+The hotel management service needs `hotel_api_password`, `shop_api_password` and
+`payment_api_password`, and finds the other services on `localhost:8081` and `localhost:8082`.
 
 ## Tests
 
 ```bash
-mvn test
+mvn verify
 ```
 
-JUnit 5 tests live under `src/test/java`, one class per service plus two cross-cutting ones:
+The same command runs on every push and pull request to `main`
+(`.github/workflows/tests.yml`). Each service has:
 
 | Test | Covers |
 |---|---|
-| `shop.ShopControllerTest` | Pricing strategies and additional services |
-| `payment.PaymentControllerTest` | Approval, decline, and what is passed to the payment provider |
-| `hotelmanagement.FrontDeskControllerTest` | Booking, check-in and check-out paths, with the shop and payment services stubbed out |
-| `ServicesIntegrationTest` | All three services wired as in `Main` |
-| `ArchitectureTest` | The layer and cross-service rules from [docs/architecture.md](docs/architecture.md) |
-
-The program runs a sample booking, adds optional services, calculates a price,
-processes a simulated payment, confirms the reservation, and demonstrates
-check-in and check-out. It also prints notifications and audit events.
+| Use-case tests (`QuoteStayInteractorTest`, `ProcessPaymentInteractorTest`, `ReservationUseCasesTest`) | Business rules, with a recording presenter and stub gateways |
+| API tests (`ShopApiTest`, `PaymentApiTest`, `ReservationApiTest`) | Routes, HTTP status codes and authentication, through the full Spring context |
+| `ServiceClientsTest` (hotel management) | The exact HTTP calls made to the shop and payment services |
+| `ArchitectureTest` | Layer rules, no imports between services, no Spring in the core layers |
 
 ## Project layout
 
-The code under `src/main/java/org/nightking` is split into three services, each organised
-with clean architecture (`controller`, `model`, `usecase`, `entity`, `gateway`, `infrastructure`):
-
-| Service | Business purpose | Entry point |
+| Module | Business purpose | Entry point |
 |---|---|---|
-| `hotelmanagement` | Rooms, guests, reservations and their lifecycle, guest notifications | `FrontDeskController` |
-| `shop` | Pricing strategies and additional services | `ShopController` |
-| `payment` | Charging the guest through an external payment provider | `PaymentController` |
+| `hotel-management-service` | Rooms, guests, reservations and their lifecycle, guest notifications | `FrontDeskController` |
+| `shop-service` | Pricing strategies and additional services | `ShopController` |
+| `payment-service` | Charging the guest through an external payment provider | `PaymentController` |
 
-`Main` starts all three in one JVM and wires them together. Services only call each other
-through controllers. See [docs/architecture.md](docs/architecture.md) for the diagrams, the
-layer rules and where every original class went.
+Each module is organised with clean architecture (`controller`, `presenter`, `model`, `usecase`,
+`entity`, `gateway`, `infrastructure`, `config`). See [docs/architecture.md](docs/architecture.md)
+for the diagrams and rules.
 
 ## What is intentionally simplified
-- Data is stored in memory; there is no database or web interface.
+- Data is stored in memory and resets when a service restarts; run one instance per service.
 - The payment gateway is simulated; no real payment is taken.
-- The sample uses fixed rooms, guests, prices, and dates.
-- The focus is on pattern collaboration, not production features.
+- One room (204) is seeded at startup.
+- Room availability only looks at the room's current status, not at booked dates.
+- Auth is HTTP Basic over plain HTTP with one user per service; put HTTPS in front for anything real.
 
 ## Pattern map
 | Pattern | Service | Main implementation |
@@ -71,8 +131,8 @@ layer rules and where every original class went.
 | Facade | hotel management | `FrontDeskController` |
 
 ## Try changing the demo
-- In `Main.java`, replace `SeasonalPricing` with `StandardPricing` or `LongStayDiscountPricing`.
-- Toggle breakfast, spa or airport transfer in the `BookRoomRequest` in `Main.java` to add/remove `BreakfastService`, `SpaPackage`, or `AirportTransfer`.
-- Change the payment amount or the simulated gateway result.
-- Try calling `checkIn()` before payment confirmation to see the State pattern reject it.
+- In `shop-service/.../config/ShopConfig.java`, replace `SeasonalPricing` with `StandardPricing` or `LongStayDiscountPricing`.
+- Toggle `breakfast`, `spa` or `airportTransfer` in the booking request to add/remove `BreakfastService`, `SpaPackage`, or `AirportTransfer`.
+- Call the payment service with `"amount": 0` to see the simulated gateway decline.
+- Book with a declined payment, then try to check in to see the State pattern reject it (`409`).
 # asd-hotel-reservation-nonaislop

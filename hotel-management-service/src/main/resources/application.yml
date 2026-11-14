@@ -1,0 +1,25 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: hotel-management-service
+  config:
+    # Docker secrets are mounted as files in /run/secrets; each file becomes a property
+    # named after the file (e.g. hotel_api_password).
+    import: optional:configtree:/run/secrets/
+
+api:
+  auth:
+    username: ${HOTEL_API_USERNAME:front-desk}
+    password: ${hotel_api_password:}
+
+services:
+  shop:
+    url: ${SHOP_SERVICE_URL:http://localhost:8081}
+    username: ${SHOP_API_USERNAME:shop-client}
+    password: ${shop_api_password:}
+  payment:
+    url: ${PAYMENT_SERVICE_URL:http://localhost:8082}
+    username: ${PAYMENT_API_USERNAME:payment-client}
+    password: ${payment_api_password:}

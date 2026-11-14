@@ -1,26 +1,31 @@
-# Architecture: three services, clean architecture inside each
+# Architecture: three Spring Boot services, clean architecture inside each
 
-The proof of concept is split into three services by business purpose. Every service is laid
-out the same way, and a service talks to another one only through that service's controller.
+The system is split into three services by business purpose. Each service is its own Maven
+module, Spring Boot application and Docker container. A service talks to another one only over
+HTTP, through that service's REST controller, with HTTP Basic auth.
 
-| Service | Business purpose | Entry point |
-|---|---|---|
-| `hotelmanagement` | Rooms, guests, reservations and their lifecycle, guest notifications | `FrontDeskController` |
-| `shop` | Pricing strategies and additional services (breakfast, spa, airport transfer) | `ShopController` |
-| `payment` | Charging the guest through an external payment provider | `PaymentController` |
+| Service (module) | Business purpose | Entry point | Port |
+|---|---|---|---|
+| `hotel-management-service` | Rooms, guests, reservations and their lifecycle, guest notifications | `FrontDeskController` → `/api/reservations` | 8080 |
+| `shop-service` | Pricing strategies and additional services (breakfast, spa, airport transfer) | `ShopController` → `/api/shop/quotes` | 8081 |
+| `payment-service` | Charging the guest through an external payment provider | `PaymentController` → `/api/payments` | 8082 |
 
 Layers inside each service:
 
 | Layer | Holds | May depend on |
 |---|---|---|
-| `controller` | The service's entry point | `usecase`, `model` |
-| `model` | Request/response records that cross the controller | `entity` (only to build responses) |
-| `usecase` | One interface per use case, plus its implementation (interactor) | `entity`, `model`, `gateway` |
+| `controller` | REST endpoints; creates a presenter per request and calls a use case | `usecase`, `model`, `presenter` |
+| `presenter` | Implements the use case's output port; builds the JSON view model and HTTP status | `usecase`, `model` |
+| `model` | Request/response records crossing the use case boundary | `entity` (only to build responses) |
+| `usecase` | One interface per use case, its implementation (interactor), and its presenter interface (output port) | `entity`, `model`, `gateway` |
 | `entity` | Core business objects and rules | nothing outside `entity` |
 | `gateway` | Interfaces for what the use cases need from outside | `entity` |
-| `infrastructure` | Implementations of the gateways: storage, external SDKs, clients of other services | `gateway`, `entity`, `model`, and **another service's `controller`/`model` only** |
+| `infrastructure` | Gateway implementations: storage, external SDKs, HTTP clients of other services | `gateway`, `entity`, `model` |
+| `config` | Spring wiring (composition root) and security | everything in the service |
 
-The shop needs nothing from outside, so it has no `gateway` or `infrastructure` layer.
+`entity`, `model`, `gateway` and `usecase` contain no Spring code. The shop needs nothing from
+outside, so it has no `gateway` or `infrastructure` layer. Every rule here is enforced by the
+`ArchitectureTest` in each module.
 
 ## 1. How the original code was split
 
@@ -39,7 +44,7 @@ flowchart LR
         b_pay["payment"]
     end
 
-    subgraph hm["hotelmanagement"]
+    subgraph hm["hotel-management-service"]
         direction TB
         hm_c["controller<br/>FrontDeskController"]
         hm_u["usecase<br/>BookRoom · CheckIn · CheckOut<br/>ReservationEventPublisher"]
@@ -48,13 +53,13 @@ flowchart LR
         hm_i["infrastructure<br/>Email · SMS · Audit notifiers"]
     end
 
-    subgraph sh["shop"]
+    subgraph sh["shop-service"]
         direction TB
         sh_u["usecase<br/>QuoteStay"]
         sh_e["entity<br/>pricing strategies<br/>charge decorators"]
     end
 
-    subgraph pa["payment"]
+    subgraph pa["payment-service"]
         direction TB
         pa_u["usecase<br/>ProcessPayment"]
         pa_g["gateway<br/>PaymentProcessor"]
@@ -77,60 +82,62 @@ flowchart LR
 
 ## 2. Inside the services and how they talk
 
-Solid arrows point in the direction of a dependency (always inward, toward the entities).
-Dashed arrows mean "implements". The thick arrows are the only calls between services.
+Solid arrows point in the direction of a dependency (inward, toward the entities). Dashed arrows
+mean "implements". The thick arrows are the only calls between services: HTTP with Basic auth.
 
 ```mermaid
 flowchart LR
-    client(["Main / any client"])
+    client(["API client<br/>curl · front-end"])
 
-    subgraph HM["Hotel management service"]
+    subgraph HM["hotel-management-service :8080"]
         direction TB
-        hmC["<b>controller</b><br/>FrontDeskController"]
-        hmM["<b>model</b><br/>BookRoomRequest · GuestDetails<br/>ReservationResponse"]
-        hmU["<b>usecase</b><br/>BookRoom · CheckIn · CheckOut<br/>ReservationEventPublisher"]
+        hmC["<b>controller</b><br/>FrontDeskController<br/>/api/reservations"]
+        hmP["<b>presenter</b><br/>ReservationWebPresenter<br/>ReservationViewModel"]
+        hmU["<b>usecase</b><br/>BookRoom · CheckIn · CheckOut<br/>ReservationPresenter (output port)"]
+        hmM["<b>model</b><br/>BookRoomRequest · ReservationResponse"]
         hmE["<b>entity</b><br/>Reservation · Room · Guest<br/>lifecycle states"]
-        hmG["<b>gateway</b> (interfaces)<br/>RoomRepository · ReservationRepository<br/>ShopGateway · PaymentGateway<br/>ReservationObserver"]
-        hmI["<b>infrastructure</b><br/>in-memory repositories<br/>Email · SMS · Audit notifiers<br/>ShopServiceClient · PaymentServiceClient"]
+        hmG["<b>gateway</b><br/>RoomRepository · ReservationRepository<br/>ShopGateway · PaymentGateway<br/>ReservationObserver"]
+        hmI["<b>infrastructure</b><br/>in-memory repositories · notifiers<br/>ShopServiceClient · PaymentServiceClient"]
         hmC --> hmU
-        hmC --> hmM
+        hmC --> hmP
+        hmP -. implements .-> hmU
         hmU --> hmM
         hmU --> hmE
         hmU --> hmG
         hmI -. implements .-> hmG
     end
 
-    subgraph SH["Shop service"]
+    subgraph SH["shop-service :8081"]
         direction TB
-        shC["<b>controller</b><br/>ShopController"]
-        shM["<b>model</b><br/>StayQuoteRequest · StayQuoteResponse"]
+        shC["<b>controller</b><br/>ShopController<br/>/api/shop/quotes"]
+        shP["<b>presenter</b><br/>QuoteStayWebPresenter"]
         shU["<b>usecase</b><br/>QuoteStay"]
         shE["<b>entity</b><br/>PricingPolicy + strategies<br/>Chargeable + decorators"]
         shC --> shU
-        shC --> shM
-        shU --> shM
+        shC --> shP
+        shP -. implements .-> shU
         shU --> shE
     end
 
-    subgraph PA["Payment service"]
+    subgraph PA["payment-service :8082"]
         direction TB
-        paC["<b>controller</b><br/>PaymentController"]
-        paM["<b>model</b><br/>PaymentRequest · PaymentResponse"]
+        paC["<b>controller</b><br/>PaymentController<br/>/api/payments"]
+        paP["<b>presenter</b><br/>PaymentWebPresenter"]
         paU["<b>usecase</b><br/>ProcessPayment"]
         paE["<b>entity</b><br/>Payment · PaymentStatus"]
-        paG["<b>gateway</b> (interface)<br/>PaymentProcessor"]
+        paG["<b>gateway</b><br/>PaymentProcessor"]
         paI["<b>infrastructure</b><br/>PayFlowGatewayAdapter → PayFlowGateway"]
         paC --> paU
-        paC --> paM
-        paU --> paM
+        paC --> paP
+        paP -. implements .-> paU
         paU --> paE
         paU --> paG
         paI -. implements .-> paG
     end
 
-    client --> hmC
-    hmI == "quote a stay" ==> shC
-    hmI == "charge the guest" ==> paC
+    client -- "Basic auth<br/>front-desk" --> hmC
+    hmI == "POST /api/shop/quotes<br/>Basic auth shop-client" ==> shC
+    hmI == "POST /api/payments<br/>Basic auth payment-client" ==> paC
 ```
 
 ## 3. A booking across the three services
@@ -138,64 +145,80 @@ flowchart LR
 ```mermaid
 sequenceDiagram
     autonumber
-    actor C as Main / client
+    actor C as API client
     box Hotel management
         participant FD as FrontDeskController
         participant BR as BookRoomInteractor
-        participant R as Repositories
+        participant P as ReservationWebPresenter
     end
     box Shop
         participant SC as ShopController
-        participant QS as QuoteStayInteractor
     end
     box Payment
         participant PC as PaymentController
-        participant PP as ProcessPaymentInteractor
         participant PF as PayFlowGatewayAdapter
     end
 
-    C->>FD: bookRoom(BookRoomRequest)
-    FD->>BR: execute(request)
-    BR->>R: findByNumber("204")
-    BR->>SC: quoteStay(StayQuoteRequest) via ShopServiceClient
-    SC->>QS: execute(request)
-    QS-->>SC: StayQuoteResponse
-    SC-->>BR: total = EUR 450.00
-    BR->>R: nextId(), save(reservation PENDING)
-    BR->>PC: processPayment(PaymentRequest) via PaymentServiceClient
-    PC->>PP: execute(request)
-    PP->>PF: processPayment(id, 450.00)
-    PF-->>PP: approved
-    PP-->>PC: PaymentResponse(approved)
-    PC-->>BR: approved
-    BR->>BR: reservation.confirm()
-    BR->>R: save(reservation CONFIRMED)
-    Note over BR: notify Email, SMS and Audit observers
-    BR-->>FD: ReservationResponse(CONFIRMED)
-    FD-->>C: ReservationResponse(CONFIRMED)
+    C->>FD: POST /api/reservations (Basic auth)
+    FD->>BR: execute(request, presenter)
+    BR->>SC: POST /api/shop/quotes via ShopServiceClient
+    SC-->>BR: 200 {total: 450.00}
+    BR->>BR: save reservation (PENDING)
+    BR->>PC: POST /api/payments via PaymentServiceClient
+    PC->>PF: processPayment(id, 450.00)
+    PF-->>PC: approved
+    PC-->>BR: 200 {status: APPROVED}
+    BR->>BR: confirm(), notify Email / SMS / Audit
+    BR->>P: presentBooked(ReservationResponse)
+    P-->>FD: 201 + ReservationViewModel
+    FD-->>C: 201 {state: CONFIRMED, totalPrice: 450.00}
+```
+
+## 4. Deployment with Docker Compose
+
+Each service runs in its own container. Each container gets only the secrets it needs; the
+hotel management service also holds the passwords of the services it calls.
+
+```mermaid
+flowchart LR
+    client(["API client"])
+    subgraph compose["docker compose: hotel-reservation"]
+        hm["hotel-management-service<br/>:8080"]
+        sh["shop-service<br/>:8081"]
+        pa["payment-service<br/>:8082"]
+    end
+    s1[/"hotel_api_password"/]
+    s2[/"shop_api_password"/]
+    s3[/"payment_api_password"/]
+
+    client --> hm
+    hm --> sh
+    hm --> pa
+    s1 -. secret .-> hm
+    s2 -. secret .-> hm
+    s3 -. secret .-> hm
+    s2 -. secret .-> sh
+    s3 -. secret .-> pa
 ```
 
 ## Rules that keep the services independent
 
 1. **Dependencies point inward.** `controller → usecase → entity`. Use cases reach the outside
-   world only through `gateway` interfaces, and `infrastructure` implements them.
-2. **Entities never leave a service.** Controllers take and return `model` records.
-3. **One door between services.** A service calls another only from its `infrastructure`
-   layer, and only through that service's `controller` and `model`
-   (`ShopServiceClient`, `PaymentServiceClient`).
-4. **`Main` is the composition root.** It is the only class that knows every concrete class
-   and wires the three services together.
-
-Today the services run in one JVM and call each other in-process. To deploy them separately,
-each service package becomes its own module with its own `Main`, and the two client classes
-switch from calling the controller directly to calling it over HTTP. Rule 3 is what keeps
-that change limited to those two classes.
+   world only through `gateway` interfaces and send results out only through their presenter
+   interface.
+2. **Entities never leave a service.** Use cases hand `model` records to presenters, and
+   presenters turn them into view models for JSON.
+3. **No shared code between services.** Each service is a separate module. The hotel management
+   clients keep their own copy of the shop and payment request/response shapes.
+4. **Every call is authenticated.** Each API requires HTTP Basic auth; passwords are Docker
+   secrets, never committed.
+5. **`config` is the composition root.** It is the only place that knows every concrete class.
 
 ## Where every original class went
 
 | Before | After |
 |---|---|
-| `frontdesk.FrontDesk` | Split: `hotelmanagement.controller.FrontDeskController` + `BookRoom`, `CheckIn`, `CheckOut` use cases; the pricing and extras part moved to `shop.usecase.QuoteStayInteractor` |
+| `frontdesk.FrontDesk` | Split: `FrontDeskController` + `BookRoom`, `CheckIn`, `CheckOut` use cases in hotel management; the pricing and extras part moved to the shop's `QuoteStayInteractor` |
 | `guest.Guest`, `room.Room`, `room.RoomStatus`, `reservation.Reservation` | `hotelmanagement.entity` |
 | `reservation.lifecycle.*` | `hotelmanagement.entity.lifecycle` |
 | `room.RoomAvailabilityService` | `Room.isAvailable()` |
@@ -209,6 +232,3 @@ that change limited to those two classes.
 | `payment.PaymentProcessor` | `payment.gateway` |
 | `payment.PayFlowGateway`, `PayFlowGatewayAdapter` | `payment.infrastructure` |
 | `payment.PaymentService` | `payment.usecase.ProcessPaymentInteractor` |
-
-New in the split: the `model` records, the use-case interfaces, the repository and service
-gateways with their implementations, the three controllers, and the `Payment` entity.
