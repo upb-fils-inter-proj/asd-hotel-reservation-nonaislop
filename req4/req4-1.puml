@@ -1,0 +1,155 @@
+
+@startuml
+
+title Sequence Diagram 1 - Room Search, Reservation and Payment
+
+autonumber
+
+actor Guest
+boundary "Hotel Application" as UI
+control "HotelFacade" as Facade
+control "RoomAvailabilityService" as Availability
+control "PricingPolicy" as Pricing
+participant "PricingStrategy" as Strategy
+participant "RoomStayCharge" as BaseCharge
+participant "ServiceDecorator" as Decorator
+control "ReservationService" as ReservationService
+entity "Reservation" as Reservation
+participant "PendingState" as Pending
+control "PaymentService" as PaymentService
+participant "PayFlowGatewayAdapter" as Adapter
+participant "PayFlowGateway" as Gateway
+control "ReservationEventPublisher" as Publisher
+participant "EmailNotifier" as Email
+participant "SmsNotifier" as SMS
+participant "AuditLogObserver" as Audit
+
+== Search for Available Rooms ==
+
+Guest -> UI: Enter check-in and check-out dates
+UI -> Facade: searchRooms(checkIn, checkOut)
+Facade -> Availability: searchAvailableRooms(checkIn, checkOut)
+
+Availability -> Availability: Check room availability
+Availability -> Availability: Check overlapping reservations
+
+alt Available rooms found
+    Availability --> Facade: Return available rooms
+    Facade --> UI: Display available rooms
+    UI --> Guest: Show available rooms and prices
+else No available rooms
+    Availability --> Facade: Return empty list
+    Facade --> UI: No rooms available
+    UI --> Guest: Display unavailable message
+end
+
+== Select Room and Calculate Price ==
+
+Guest -> UI: Select room and additional services
+UI -> Facade: bookRoom(guest, room)
+
+Facade -> Availability: isRoomAvailable(room)
+
+alt Room is still available
+
+    Availability --> Facade: true
+
+    Facade -> Pricing: calculatePrice(reservation)
+    Pricing -> Strategy: calculatePrice(reservation)
+    Strategy --> Pricing: Return base room price
+    Pricing --> Facade: Return calculated room price
+
+    Facade -> BaseCharge: Create room stay charge
+    BaseCharge --> Facade: Return Chargeable object
+
+    opt Guest selects breakfast
+        Facade -> Decorator: Wrap charge with BreakfastService
+        Decorator --> Facade: Updated Chargeable object
+    end
+
+    opt Guest selects spa package
+        Facade -> Decorator: Wrap charge with SpaPackage
+        Decorator --> Facade: Updated Chargeable object
+    end
+
+    opt Guest selects airport transfer
+        Facade -> Decorator: Wrap charge with AirportTransfer
+        Decorator --> Facade: Updated Chargeable object
+    end
+
+    Facade -> Decorator: getCost()
+    Decorator --> Facade: Return total cost
+
+    == Create Reservation ==
+
+    Facade -> ReservationService: createReservation(guest, room)
+    ReservationService -> Availability: Check availability again
+    Availability --> ReservationService: Room available
+
+    ReservationService -> Reservation: Create reservation
+    Reservation -> Pending: Set initial state
+    Pending --> Reservation: Reservation pending
+
+    Reservation --> ReservationService: Return reservation
+    ReservationService --> Facade: Return reservation
+
+    == Process Payment ==
+
+    Facade -> PaymentService: makePayment(reservation)
+    PaymentService -> Adapter: processPayment(amount)
+    Adapter -> Adapter: Convert amount to cents
+    Adapter -> Gateway: makeTransaction(amountInCents)
+    Gateway --> Adapter: Return transaction status
+
+    alt Payment successful
+
+        Adapter --> PaymentService: Payment successful
+        PaymentService -> PaymentService: Create Payment (SUCCESS)
+        PaymentService --> Facade: Return successful payment
+
+        == Confirm Reservation ==
+
+        Facade -> Reservation: confirm()
+        Reservation -> Pending: confirm(reservation)
+        Pending -> Reservation: setState(ConfirmedState)
+        Reservation --> Facade: Reservation confirmed
+
+        == Send Notifications ==
+
+        Facade -> Publisher: notifyObservers(reservation, "CONFIRMED")
+
+        Publisher -> Email: update(reservation, event)
+        Email -> Email: sendEmail()
+        Email --> Publisher: Email sent
+
+        Publisher -> SMS: update(reservation, event)
+        SMS -> SMS: sendSms()
+        SMS --> Publisher: SMS sent
+
+        Publisher -> Audit: update(reservation, event)
+        Audit -> Audit: recordEvent()
+        Audit --> Publisher: Event recorded
+
+        Publisher --> Facade: Notifications completed
+
+        Facade --> UI: Return booking confirmation
+        UI --> Guest: Display confirmation and payment details
+
+    else Payment failed
+
+        Adapter --> PaymentService: Payment failed
+        PaymentService --> Facade: Payment unsuccessful
+        Facade --> UI: Display payment failure
+        UI --> Guest: Show payment error
+
+    end
+
+else Room is no longer available
+
+    Availability --> Facade: false
+    Facade --> UI: Booking rejected
+    UI --> Guest: Ask guest to select another room
+
+end
+
+@enduml
