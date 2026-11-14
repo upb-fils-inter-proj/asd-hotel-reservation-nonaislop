@@ -1,0 +1,139 @@
+
+@startuml
+
+title Sequence Diagram 2 - Guest Check-in and Check-out
+
+autonumber
+
+actor "Hotel Staff" as Staff
+actor Guest
+boundary "Hotel Application" as UI
+control "HotelFacade" as Facade
+control "ReservationService" as ReservationService
+entity "Reservation" as Reservation
+participant "ConfirmedState" as Confirmed
+participant "CheckedInState" as CheckedIn
+participant "CompletedState" as Completed
+control "RoomService" as RoomService
+entity "Room" as Room
+control "ReservationEventPublisher" as Publisher
+participant "EmailNotifier" as Email
+participant "SmsNotifier" as SMS
+participant "AuditLogObserver" as Audit
+
+== Guest Check-in ==
+
+Staff -> UI: Enter reservation ID
+UI -> Facade: checkIn(reservationId)
+Facade -> ReservationService: checkIn(reservationId)
+ReservationService -> ReservationService: Retrieve reservation
+
+alt Reservation exists
+
+    ReservationService -> Reservation: Get current state
+    Reservation --> ReservationService: ConfirmedState
+
+    ReservationService -> Reservation: checkIn()
+    Reservation -> Confirmed: checkIn(reservation)
+
+    alt Reservation is confirmed
+
+        Confirmed -> Reservation: setState(CheckedInState)
+        Reservation --> Confirmed: State updated
+        Confirmed --> Reservation: Check-in successful
+
+        ReservationService -> RoomService: updateRoomStatus()
+        RoomService -> Room: updateStatus()
+        Room --> RoomService: Room status updated
+        RoomService --> ReservationService: Update successful
+
+        ReservationService -> Publisher: notifyObservers(reservation, "CHECKED_IN")
+
+        Publisher -> Email: update(reservation, "CHECKED_IN")
+        Email -> Email: sendEmail()
+        Email --> Publisher: Email sent
+
+        Publisher -> SMS: update(reservation, "CHECKED_IN")
+        SMS -> SMS: sendSms()
+        SMS --> Publisher: SMS sent
+
+        Publisher -> Audit: update(reservation, "CHECKED_IN")
+        Audit -> Audit: recordEvent()
+        Audit --> Publisher: Event recorded
+
+        Publisher --> ReservationService: Notifications completed
+
+        ReservationService --> Facade: Check-in successful
+        Facade --> UI: Display check-in confirmation
+        UI --> Staff: Check-in completed
+        UI --> Guest: Display welcome message
+
+    else Invalid reservation state
+
+        Confirmed --> Reservation: Check-in rejected
+        Reservation --> ReservationService: Invalid state
+        ReservationService --> Facade: Check-in failed
+        Facade --> UI: Display error
+        UI --> Staff: Check-in not allowed
+
+    end
+
+else Reservation does not exist
+
+    ReservationService --> Facade: Reservation not found
+    Facade --> UI: Display error
+    UI --> Staff: Reservation not found
+
+end
+
+== Guest Check-out ==
+
+Staff -> UI: Select reservation and request checkout
+UI -> Facade: checkOut(reservationId)
+Facade -> ReservationService: checkOut(reservationId)
+ReservationService -> ReservationService: Retrieve reservation
+
+alt Reservation exists and guest is checked in
+
+    ReservationService -> Reservation: checkOut()
+    Reservation -> CheckedIn: checkOut(reservation)
+
+    CheckedIn -> Reservation: setState(CompletedState)
+    Reservation --> CheckedIn: State updated
+    CheckedIn --> Reservation: Check-out successful
+
+    ReservationService -> RoomService: updateRoomStatus()
+    RoomService -> Room: updateStatus()
+    Room --> RoomService: Room status updated
+    RoomService --> ReservationService: Update successful
+
+    ReservationService -> Publisher: notifyObservers(reservation, "CHECKED_OUT")
+
+    Publisher -> Email: update(reservation, "CHECKED_OUT")
+    Email -> Email: sendEmail()
+    Email --> Publisher: Email sent
+
+    Publisher -> SMS: update(reservation, "CHECKED_OUT")
+    SMS -> SMS: sendSms()
+    SMS --> Publisher: SMS sent
+
+    Publisher -> Audit: update(reservation, "CHECKED_OUT")
+    Audit -> Audit: recordEvent()
+    Audit --> Publisher: Event recorded
+
+    Publisher --> ReservationService: Notifications completed
+
+    ReservationService --> Facade: Check-out successful
+    Facade --> UI: Display checkout confirmation
+    UI --> Staff: Check-out completed
+    UI --> Guest: Display goodbye message
+
+else Invalid reservation state or reservation not found
+
+    ReservationService --> Facade: Check-out rejected
+    Facade --> UI: Display error
+    UI --> Staff: Check-out cannot be completed
+
+end
+
+@enduml

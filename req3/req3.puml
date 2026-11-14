@@ -1,0 +1,458 @@
+
+@startuml
+
+title Hotel Management and Reservation System - Unified Class Diagram
+
+' ==========================================
+' GLOBAL DIAGRAM SETTINGS
+' ==========================================
+
+left to right direction
+
+skinparam linetype ortho
+skinparam nodesep 45
+skinparam ranksep 55
+skinparam classAttributeIconSize 0
+skinparam shadowing false
+skinparam packageStyle rectangle
+skinparam defaultFontSize 12
+skinparam ArrowColor #555555
+skinparam packageBorderColor #555555
+
+hide empty members
+
+' ==========================================
+' 1. GUEST MANAGEMENT
+' ==========================================
+
+package "Guest Management" as GuestPackage {
+
+    class Guest {
+        - guestId: Long
+        - firstName: String
+        - lastName: String
+        - email: String
+        + register(): void
+        + viewReservations(): void
+    }
+
+    class GuestPreferences {
+        - preferenceId: Long
+        - preferenceName: String
+        - preferenceValue: String
+        + updatePreference(): void
+    }
+
+}
+
+' ==========================================
+' 2. ROOM MANAGEMENT
+' ==========================================
+
+package "Room Management" as RoomPackage {
+
+    enum RoomStatus {
+        AVAILABLE
+        OCCUPIED
+        MAINTENANCE
+        UNAVAILABLE
+    }
+
+    class Room {
+        - roomId: Long
+        - roomNumber: String
+        - floor: int
+        - status: RoomStatus
+        + updateStatus(): void
+        + isAvailable(): boolean
+    }
+
+    class RoomType {
+        - typeId: Long
+        - name: String
+        - description: String
+        - capacity: int
+        - basePrice: double
+    }
+
+    class RoomService {
+        + createRoom(): Room
+        + updateRoom(): void
+        + updateRoomStatus(): void
+        + getRoom(roomId: Long): Room
+    }
+
+    class RoomAvailabilityService {
+        + searchAvailableRooms(checkIn: Date, checkOut: Date): List<Room>
+        + isRoomAvailable(room: Room): boolean
+        + checkOverlappingReservations(): boolean
+    }
+
+}
+
+' ==========================================
+' 3. RESERVATION MANAGEMENT
+' ==========================================
+
+package "Reservation Management" as ReservationPackage {
+
+    class Reservation {
+        - reservationId: Long
+        - checkInDate: Date
+        - checkOutDate: Date
+        - totalPrice: double
+        - currentState: ReservationState
+        + create(): void
+        + cancel(): void
+        + checkIn(): void
+        + checkOut(): void
+        + setState(state: ReservationState): void
+    }
+
+    class ReservationService {
+        + createReservation(guest: Guest, room: Room): Reservation
+        + modifyReservation(reservationId: Long): void
+        + cancelReservation(reservationId: Long): void
+        + checkIn(reservationId: Long): void
+        + checkOut(reservationId: Long): void
+    }
+
+    interface ReservationState <<State>> {
+        + confirm(reservation: Reservation): void
+        + cancel(reservation: Reservation): void
+        + checkIn(reservation: Reservation): void
+        + checkOut(reservation: Reservation): void
+    }
+
+    class PendingState <<Concrete State>>
+    class ConfirmedState <<Concrete State>>
+    class CheckedInState <<Concrete State>>
+    class CompletedState <<Concrete State>>
+    class CancelledState <<Concrete State>>
+
+}
+
+' ==========================================
+' 4. PRICING AND ADDITIONAL SERVICES
+' ==========================================
+
+package "Pricing and Additional Services" as PricingPackage {
+
+    interface PricingStrategy <<Strategy>> {
+        + calculatePrice(reservation: Reservation): double
+    }
+
+    class StandardPricing <<Concrete Strategy>> {
+        + calculatePrice(reservation: Reservation): double
+    }
+
+    class SeasonalPricing <<Concrete Strategy>> {
+        + calculatePrice(reservation: Reservation): double
+    }
+
+    class LongStayDiscountPricing <<Concrete Strategy>> {
+        + calculatePrice(reservation: Reservation): double
+    }
+
+    class PricingPolicy <<Strategy Context>> {
+        - strategy: PricingStrategy
+        + setStrategy(strategy: PricingStrategy): void
+        + calculatePrice(reservation: Reservation): double
+    }
+
+    interface Chargeable <<Component>> {
+        + getCost(): double
+        + getDescription(): String
+    }
+
+    class RoomStayCharge <<Concrete Component>> {
+        - room: Room
+        - nights: int
+        + getCost(): double
+        + getDescription(): String
+    }
+
+    abstract class ServiceDecorator <<Decorator>> {
+        # wrappedCharge: Chargeable
+        + getCost(): double
+        + getDescription(): String
+    }
+
+    class BreakfastService <<Concrete Decorator>> {
+        + getCost(): double
+        + getDescription(): String
+    }
+
+    class SpaPackage <<Concrete Decorator>> {
+        + getCost(): double
+        + getDescription(): String
+    }
+
+    class AirportTransfer <<Concrete Decorator>> {
+        + getCost(): double
+        + getDescription(): String
+    }
+
+}
+
+' ==========================================
+' 5. PAYMENT MANAGEMENT
+' ==========================================
+
+package "Payment Management" as PaymentPackage {
+
+    enum PaymentStatus {
+        PENDING
+        SUCCESS
+        FAILED
+        REFUNDED
+    }
+
+    class Payment {
+        - paymentId: Long
+        - amount: double
+        - paymentDate: Date
+        - status: PaymentStatus
+        + process(): boolean
+        + refund(): void
+    }
+
+    interface PaymentProcessor <<Target>> {
+        + processPayment(amount: double): boolean
+        + refundPayment(amount: double): boolean
+    }
+
+    class PayFlowGateway <<Adaptee>> {
+        + makeTransaction(amountInCents: int): int
+        + refundTransaction(amountInCents: int): int
+    }
+
+    class PayFlowGatewayAdapter <<Adapter>> {
+        - gateway: PayFlowGateway
+        + processPayment(amount: double): boolean
+        + refundPayment(amount: double): boolean
+    }
+
+    class PaymentService {
+        - processor: PaymentProcessor
+        + makePayment(reservation: Reservation): Payment
+        + refundPayment(payment: Payment): void
+    }
+
+}
+
+' ==========================================
+' 6. NOTIFICATION MANAGEMENT
+' ==========================================
+
+package "Notification Management" as NotificationPackage {
+
+    interface ReservationObserver <<Observer>> {
+        + update(reservation: Reservation, event: String): void
+    }
+
+    class EmailNotifier <<Concrete Observer>> {
+        + update(reservation: Reservation, event: String): void
+        + sendEmail(): void
+    }
+
+    class SmsNotifier <<Concrete Observer>> {
+        + update(reservation: Reservation, event: String): void
+        + sendSms(): void
+    }
+
+    class AuditLogObserver <<Concrete Observer>> {
+        + update(reservation: Reservation, event: String): void
+        + recordEvent(): void
+    }
+
+    class ReservationEventPublisher <<Subject>> {
+        - observers: List<ReservationObserver>
+        + attach(observer: ReservationObserver): void
+        + detach(observer: ReservationObserver): void
+        + notifyObservers(reservation: Reservation, event: String): void
+    }
+
+}
+
+' ==========================================
+' 7. APPLICATION / FACADE
+' ==========================================
+
+package "Application Layer" as ApplicationPackage {
+
+    class HotelFacade <<Facade>> {
+        - roomService: RoomService
+        - availabilityService: RoomAvailabilityService
+        - reservationService: ReservationService
+        - paymentService: PaymentService
+        - pricingPolicy: PricingPolicy
+        - eventPublisher: ReservationEventPublisher
+
+        + searchRooms(checkIn: Date, checkOut: Date): List<Room>
+        + bookRoom(guest: Guest, room: Room): Reservation
+        + modifyBooking(reservationId: Long): void
+        + cancelBooking(reservationId: Long): void
+        + checkIn(reservationId: Long): void
+        + checkOut(reservationId: Long): void
+        + processPayment(reservationId: Long): Payment
+    }
+
+    class HotelStaff {
+        - staffId: Long
+        - name: String
+        - email: String
+        + manageRooms(): void
+        + manageReservations(): void
+        + manageGuests(): void
+        + managePrices(): void
+    }
+
+}
+
+' ==========================================
+' RELATIONSHIPS
+' ==========================================
+
+' GUEST MANAGEMENT
+
+Guest "1" -- "0..*" Reservation : makes
+Guest "1" *-- "0..*" GuestPreferences : has
+
+' ROOM MANAGEMENT
+
+RoomType "1" -- "0..*" Room : categorizes
+Room "1" -- "0..*" Reservation : booked for
+Room --> RoomStatus : has status
+
+RoomService ..> Room : manages
+RoomService ..> RoomType : manages
+
+RoomAvailabilityService ..> Room : checks
+RoomAvailabilityService ..> Reservation : checks overlapping bookings
+
+' RESERVATION MANAGEMENT
+
+ReservationService ..> Reservation : manages
+ReservationService ..> RoomAvailabilityService : checks availability
+
+' STATE PATTERN
+
+Reservation "1" *-- "1" ReservationState : current state
+
+ReservationState <|.. PendingState
+ReservationState <|.. ConfirmedState
+ReservationState <|.. CheckedInState
+ReservationState <|.. CompletedState
+ReservationState <|.. CancelledState
+
+' STRATEGY PATTERN
+
+PricingStrategy <|.. StandardPricing
+PricingStrategy <|.. SeasonalPricing
+PricingStrategy <|.. LongStayDiscountPricing
+
+PricingPolicy o-- PricingStrategy : uses
+
+Reservation ..> PricingPolicy : calculates price
+
+' DECORATOR PATTERN
+
+Chargeable <|.. RoomStayCharge
+Chargeable <|.. ServiceDecorator
+
+ServiceDecorator <|-- BreakfastService
+ServiceDecorator <|-- SpaPackage
+ServiceDecorator <|-- AirportTransfer
+
+ServiceDecorator o-- Chargeable : wraps
+
+Reservation ..> Chargeable : includes charges
+
+' PAYMENT MANAGEMENT
+
+PaymentProcessor <|.. PayFlowGatewayAdapter
+
+PayFlowGatewayAdapter --> PayFlowGateway : adapts
+
+PaymentService --> PaymentProcessor : uses
+PaymentService ..> Payment : creates
+
+Reservation "1" -- "0..*" Payment : has
+Payment --> PaymentStatus : has status
+
+' OBSERVER PATTERN
+
+ReservationObserver <|.. EmailNotifier
+ReservationObserver <|.. SmsNotifier
+ReservationObserver <|.. AuditLogObserver
+
+ReservationEventPublisher "1" o-- "0..*" ReservationObserver : notifies
+
+ReservationService ..> ReservationEventPublisher : publishes events
+
+' FACADE PATTERN
+
+HotelStaff --> HotelFacade : uses
+
+HotelFacade --> RoomService
+HotelFacade --> RoomAvailabilityService
+HotelFacade --> ReservationService
+HotelFacade --> PaymentService
+HotelFacade --> PricingPolicy
+HotelFacade --> ReservationEventPublisher
+HotelFacade --> Guest
+
+' ==========================================
+' DESIGN PATTERN EXPLANATORY NOTES
+' ==========================================
+
+note right of PricingPolicy
+  STRATEGY PATTERN
+
+  PricingPolicy selects a pricing algorithm.
+  Different strategies calculate prices based
+  on standard rates, seasons or stay duration.
+end note
+
+note right of ServiceDecorator
+  DECORATOR PATTERN
+
+  ServiceDecorator wraps a Chargeable object.
+  Additional services dynamically add costs
+  without modifying the original room charge.
+end note
+
+note right of ReservationState
+  STATE PATTERN
+
+  Reservation delegates lifecycle operations
+  to its current state. Each state defines
+  the permitted reservation transitions.
+end note
+
+note right of ReservationEventPublisher
+  OBSERVER PATTERN
+
+  ReservationEventPublisher notifies registered
+  observers when reservation events occur.
+  New notification channels can be added easily.
+end note
+
+note right of PayFlowGatewayAdapter
+  ADAPTER PATTERN
+
+  PayFlowGatewayAdapter implements the
+  PaymentProcessor interface and translates
+  calls to the external PayFlowGateway API.
+end note
+
+note right of HotelFacade
+  FACADE PATTERN
+
+  HotelFacade provides one simplified entry
+  point and coordinates the internal subsystems
+  required to perform hotel operations.
+end note
+
+@enduml
