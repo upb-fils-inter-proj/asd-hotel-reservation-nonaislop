@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import org.nightking.payment.entity.Payment;
 import org.nightking.payment.gateway.PaymentProcessor;
 import org.nightking.payment.infrastructure.PayFlowGateway;
 import org.nightking.payment.infrastructure.PayFlowGatewayAdapter;
@@ -16,6 +17,7 @@ import org.nightking.payment.model.PaymentRequest;
 import org.nightking.payment.model.PaymentResponse;
 
 class ProcessPaymentInteractorTest {
+    private static final List<Payment> SAVED = new ArrayList<>();
 
     static class RecordingPresenter implements ProcessPaymentPresenter {
         PaymentResponse result;
@@ -27,7 +29,7 @@ class ProcessPaymentInteractorTest {
 
     private static RecordingPresenter pay(PaymentProcessor processor, String reservationId, double amount) {
         RecordingPresenter presenter = new RecordingPresenter();
-        new ProcessPaymentInteractor(processor).execute(new PaymentRequest(reservationId, amount), presenter);
+        new ProcessPaymentInteractor(processor, SAVED::add).execute(new PaymentRequest(reservationId, amount), presenter);
         return presenter;
     }
 
@@ -58,6 +60,14 @@ class ProcessPaymentInteractorTest {
     @Test
     void providerRefusalIsReportedAsDeclined() {
         assertFalse(pay((id, amount) -> false, "RES-7", 99.5).result.approved());
+    }
+
+    @Test
+    void everyAttemptIsRecorded() {
+        SAVED.clear();
+        pay(payFlow(), "RES-1", 450.0);
+        pay(payFlow(), "RES-2", 0.0);
+        assertEquals(List.of("APPROVED", "DECLINED"), SAVED.stream().map(p -> p.getStatus().name()).toList());
     }
 
     @Test

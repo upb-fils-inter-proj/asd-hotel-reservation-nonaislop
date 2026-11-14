@@ -5,6 +5,7 @@ import org.nightking.hotelmanagement.entity.Reservation;
 
 /** What callers see of a reservation. Entities never leave the service. */
 public record ReservationResponse(String reservationId,
+                                  String guestId,
                                   String guestName,
                                   String roomNumber,
                                   LocalDate checkIn,
@@ -15,6 +16,7 @@ public record ReservationResponse(String reservationId,
     public static ReservationResponse from(Reservation reservation) {
         return new ReservationResponse(
                 reservation.getId(),
+                reservation.getGuest().getId(),
                 reservation.getGuest().getName(),
                 reservation.getRoom().getRoomNumber(),
                 reservation.getCheckInDate(),

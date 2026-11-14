@@ -1,7 +1,30 @@
 # Run ./scripts/generate-secrets.sh once before the first `docker compose up --build`.
+# Open the web app at http://localhost:8090
 name: hotel-reservation
 
+x-postgres-healthcheck: &postgres-healthcheck
+  test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+  interval: 5s
+  timeout: 5s
+  retries: 20
+
 services:
+  # --- front door: guest and administration web interface
+  web-app:
+    build:
+      context: .
+      dockerfile: web-app/Dockerfile
+    ports:
+      - "8090:8090"
+    environment:
+      HOTEL_SERVICE_URL: http://hotel-management-service:8080
+      HOTEL_API_USERNAME: front-desk
+    secrets:
+      - hotel_api_password      # to call the hotel management service
+    depends_on:
+      - hotel-management-service
+
+  # --- services
   hotel-management-service:
     build:
       context: .
@@ -9,18 +32,27 @@ services:
     ports:
       - "8080:8080"
     environment:
+      HOTEL_DB_URL: jdbc:postgresql://hotel-db:5432/hotel
+      HOTEL_DB_USERNAME: hotel
       SHOP_SERVICE_URL: http://shop-service:8081
       PAYMENT_SERVICE_URL: http://payment-service:8082
       HOTEL_API_USERNAME: front-desk
       SHOP_API_USERNAME: shop-client
       PAYMENT_API_USERNAME: payment-client
+      ADMIN_USERNAME: admin
     secrets:
+      - hotel_db_password       # its own database
       - hotel_api_password      # its own API
+      - admin_password          # the pre-created administrator
       - shop_api_password       # to call the shop service
       - payment_api_password    # to call the payment service
     depends_on:
-      - shop-service
-      - payment-service
+      hotel-db:
+        condition: service_healthy
+      shop-service:
+        condition: service_started
+      payment-service:
+        condition: service_started
 
   shop-service:
     build:
@@ -29,9 +61,15 @@ services:
     ports:
       - "8081:8081"
     environment:
+      SHOP_DB_URL: jdbc:postgresql://shop-db:5432/shop
+      SHOP_DB_USERNAME: shop
       SHOP_API_USERNAME: shop-client
     secrets:
+      - shop_db_password
       - shop_api_password
+    depends_on:
+      shop-db:
+        condition: service_healthy
 
   payment-service:
     build:
@@ -40,9 +78,57 @@ services:
     ports:
       - "8082:8082"
     environment:
+      PAYMENT_DB_URL: jdbc:postgresql://payment-db:5432/payment
+      PAYMENT_DB_USERNAME: payment
       PAYMENT_API_USERNAME: payment-client
     secrets:
+      - payment_db_password
       - payment_api_password
+    depends_on:
+      payment-db:
+        condition: service_healthy
+
+  # --- one database per service (not published on the host)
+  hotel-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: hotel
+      POSTGRES_USER: hotel
+      POSTGRES_PASSWORD_FILE: /run/secrets/hotel_db_password
+    secrets:
+      - hotel_db_password
+    volumes:
+      - hotel-data:/var/lib/postgresql/data
+    healthcheck: *postgres-healthcheck
+
+  shop-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: shop
+      POSTGRES_USER: shop
+      POSTGRES_PASSWORD_FILE: /run/secrets/shop_db_password
+    secrets:
+      - shop_db_password
+    volumes:
+      - shop-data:/var/lib/postgresql/data
+    healthcheck: *postgres-healthcheck
+
+  payment-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: payment
+      POSTGRES_USER: payment
+      POSTGRES_PASSWORD_FILE: /run/secrets/payment_db_password
+    secrets:
+      - payment_db_password
+    volumes:
+      - payment-data:/var/lib/postgresql/data
+    healthcheck: *postgres-healthcheck
+
+volumes:
+  hotel-data:
+  shop-data:
+  payment-data:
 
 secrets:
   hotel_api_password:
@@ -51,3 +137,11 @@ secrets:
     file: ./secrets/shop_api_password.txt
   payment_api_password:
     file: ./secrets/payment_api_password.txt
+  admin_password:
+    file: ./secrets/admin_password.txt
+  hotel_db_password:
+    file: ./secrets/hotel_db_password.txt
+  shop_db_password:
+    file: ./secrets/shop_db_password.txt
+  payment_db_password:
+    file: ./secrets/payment_db_password.txt

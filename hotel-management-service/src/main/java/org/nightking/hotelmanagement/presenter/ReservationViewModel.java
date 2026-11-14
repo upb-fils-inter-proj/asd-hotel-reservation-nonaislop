@@ -7,6 +7,7 @@ import org.nightking.hotelmanagement.model.ReservationResponse;
 
 /** JSON shape of a reservation returned by the API. */
 public record ReservationViewModel(String reservationId,
+                                   String guestId,
                                    String guestName,
                                    String roomNumber,
                                    LocalDate checkIn,
@@ -18,6 +19,7 @@ public record ReservationViewModel(String reservationId,
     static ReservationViewModel from(ReservationResponse reservation) {
         return new ReservationViewModel(
                 reservation.reservationId(),
+                reservation.guestId(),
                 reservation.guestName(),
                 reservation.roomNumber(),
                 reservation.checkIn(),

@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments :: head('My reservations')}"></head>
+<body>
+<header th:replace="~{fragments :: nav}"></header>
+<main>
+    <div class="heading-row">
+        <h1>My reservations</h1>
+        <a th:href="@{/reservations/new}" class="button">Book a room</a>
+    </div>
+    <div th:replace="~{fragments :: messages}"></div>
+
+    <p th:if="${#lists.isEmpty(reservations)}" class="muted">You have no reservations yet.</p>
+    <table th:unless="${#lists.isEmpty(reservations)}">
+        <thead>
+        <tr><th>Reservation</th><th>Room</th><th>Check-in</th><th>Check-out</th><th class="num">Total</th><th>Status</th></tr>
+        </thead>
+        <tbody>
+        <tr th:each="r : ${reservations}">
+            <td th:text="${r.reservationId}">RES-1000</td>
+            <td th:text="${r.roomNumber}">204</td>
+            <td th:text="${r.checkIn}">2026-12-10</td>
+            <td th:text="${r.checkOut}">2026-12-13</td>
+            <td class="num" th:text="${r.currency} + ' ' + ${r.totalPrice}">EUR 450.00</td>
+            <td><span class="state" th:classappend="${#strings.toLowerCase(r.state)}" th:text="${r.state}">CONFIRMED</span></td>
+        </tr>
+        </tbody>
+    </table>
+</main>
+</body>
+</html>

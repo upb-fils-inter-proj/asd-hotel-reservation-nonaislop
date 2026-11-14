@@ -6,6 +6,7 @@ COPY pom.xml .
 COPY hotel-management-service/pom.xml hotel-management-service/
 COPY shop-service/pom.xml shop-service/
 COPY payment-service/pom.xml payment-service/
+COPY web-app/pom.xml web-app/
 # Download dependencies in their own layer so source changes don't re-download them.
 RUN mvn -B -q -pl shop-service -am dependency:go-offline
 COPY shop-service/src shop-service/src

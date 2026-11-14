@@ -33,6 +33,11 @@ public class Reservation {
     public ReservationState getState() { return state; }
     public void setState(ReservationState state) { this.state = state; }
 
+    /** True if this reservation keeps the room booked on any night between the given dates. */
+    public boolean blocks(LocalDate from, LocalDate to) {
+        return state.holdsRoom() && checkInDate.isBefore(to) && from.isBefore(checkOutDate);
+    }
+
     public void confirm() { state.confirm(this); }
     public void checkIn() { state.checkIn(this); }
     public void checkOut() { state.checkOut(this); }

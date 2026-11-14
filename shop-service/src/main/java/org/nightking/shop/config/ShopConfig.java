@@ -2,6 +2,9 @@ package org.nightking.shop.config;
 
 import org.nightking.shop.entity.pricing.PricingPolicy;
 import org.nightking.shop.entity.pricing.SeasonalPricing;
+import org.nightking.shop.gateway.ExtrasCatalog;
+import org.nightking.shop.infrastructure.persistence.ExtraPriceJpaRepository;
+import org.nightking.shop.infrastructure.persistence.JpaExtrasCatalog;
 import org.nightking.shop.usecase.QuoteStayInteractor;
 import org.nightking.shop.usecase.QuoteStayUseCase;
 import org.springframework.context.annotation.Bean;
@@ -20,7 +23,12 @@ public class ShopConfig {
     }
 
     @Bean
-    QuoteStayUseCase quoteStayUseCase(PricingPolicy pricingPolicy) {
-        return new QuoteStayInteractor(pricingPolicy);
+    ExtrasCatalog extrasCatalog(ExtraPriceJpaRepository prices) {
+        return new JpaExtrasCatalog(prices);
+    }
+
+    @Bean
+    QuoteStayUseCase quoteStayUseCase(PricingPolicy pricingPolicy, ExtrasCatalog extrasCatalog) {
+        return new QuoteStayInteractor(pricingPolicy, extrasCatalog);
     }
 }

@@ -1,8 +1,11 @@
 package org.nightking.payment.config;
 
 import org.nightking.payment.gateway.PaymentProcessor;
+import org.nightking.payment.gateway.PaymentRepository;
 import org.nightking.payment.infrastructure.PayFlowGateway;
 import org.nightking.payment.infrastructure.PayFlowGatewayAdapter;
+import org.nightking.payment.infrastructure.persistence.JpaPaymentRepository;
+import org.nightking.payment.infrastructure.persistence.PaymentJpaRepository;
 import org.nightking.payment.usecase.ProcessPaymentInteractor;
 import org.nightking.payment.usecase.ProcessPaymentUseCase;
 import org.springframework.context.annotation.Bean;
@@ -19,7 +22,12 @@ public class PaymentConfig {
     }
 
     @Bean
-    ProcessPaymentUseCase processPaymentUseCase(PaymentProcessor paymentProcessor) {
-        return new ProcessPaymentInteractor(paymentProcessor);
+    PaymentRepository paymentRepository(PaymentJpaRepository payments) {
+        return new JpaPaymentRepository(payments);
+    }
+
+    @Bean
+    ProcessPaymentUseCase processPaymentUseCase(PaymentProcessor paymentProcessor, PaymentRepository payments) {
+        return new ProcessPaymentInteractor(paymentProcessor, payments);
     }
 }

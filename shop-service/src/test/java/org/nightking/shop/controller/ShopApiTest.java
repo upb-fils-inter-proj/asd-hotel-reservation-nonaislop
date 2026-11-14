@@ -10,10 +10,12 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
 @SpringBootTest(properties = "shop_api_password=test-secret")
 @AutoConfigureMockMvc
+@ActiveProfiles("test")
 class ShopApiTest {
     private static final String QUOTE = """
             {"nightlyRate": 100.0, "nights": 3, "breakfast": true, "spa": true, "airportTransfer": false}

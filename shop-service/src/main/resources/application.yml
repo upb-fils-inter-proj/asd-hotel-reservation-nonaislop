@@ -8,6 +8,14 @@ spring:
     # Docker secrets are mounted as files in /run/secrets; each file becomes a property
     # named after the file (e.g. shop_api_password).
     import: optional:configtree:/run/secrets/
+  datasource:
+    url: ${SHOP_DB_URL:jdbc:postgresql://localhost:5433/shop}
+    username: ${SHOP_DB_USERNAME:shop}
+    password: ${shop_db_password:}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: none
 
 api:
   auth:

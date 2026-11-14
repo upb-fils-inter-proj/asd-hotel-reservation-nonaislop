@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments :: head('Book a room')}"></head>
+<body>
+<header th:replace="~{fragments :: nav}"></header>
+<main class="narrow">
+    <h1>Book a room</h1>
+    <div th:replace="~{fragments :: messages}"></div>
+
+    <form th:action="@{/reservations}" th:object="${bookingForm}" method="post" class="form">
+        <label>Room
+            <select th:field="*{roomNumber}" required>
+                <option th:each="room : ${rooms}" th:value="${room.roomNumber}"
+                        th:text="${room.roomNumber} + ' · ' + ${room.roomType} + ' · ' + ${room.currency} + ' ' + ${room.nightlyRate} + ' / night'">
+                    204 · Deluxe</option>
+            </select>
+        </label>
+        <div class="row">
+            <label>Check-in <input type="date" th:field="*{checkIn}" required></label>
+            <label>Check-out <input type="date" th:field="*{checkOut}" required></label>
+        </div>
+        <fieldset>
+            <legend>Additional services</legend>
+            <label class="check"><input type="checkbox" th:field="*{breakfast}"> Breakfast (per night)</label>
+            <label class="check"><input type="checkbox" th:field="*{spa}"> Spa package</label>
+            <label class="check"><input type="checkbox" th:field="*{airportTransfer}"> Airport transfer</label>
+        </fieldset>
+        <button type="submit" class="button">Book and pay</button>
+        <p class="muted">The price is calculated when you book and charged right away.</p>
+    </form>
+</main>
+</body>
+</html>

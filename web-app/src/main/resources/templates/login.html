@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments :: head('Log in')}"></head>
+<body>
+<header th:replace="~{fragments :: nav}"></header>
+<main class="narrow">
+    <h1>Log in</h1>
+    <p class="notice" th:if="${param.registered}">Your account was created. Log in to book a room.</p>
+    <p class="notice" th:if="${param.logout}">You have been logged out.</p>
+    <p class="alert" th:if="${param.error}"
+       th:text="${session['SPRING_SECURITY_LAST_EXCEPTION']?.message} ?: 'Invalid username or password.'">
+        Invalid username or password.</p>
+
+    <form th:action="@{/login}" method="post" class="form">
+        <label>Username <input type="text" name="username" autocomplete="username" required autofocus></label>
+        <label>Password <input type="password" name="password" autocomplete="current-password" required></label>
+        <button type="submit" class="button">Log in</button>
+    </form>
+    <p class="muted">New here? <a th:href="@{/register}">Create an account</a>.</p>
+</main>
+</body>
+</html>

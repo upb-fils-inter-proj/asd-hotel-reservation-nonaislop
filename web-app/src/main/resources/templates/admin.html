@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments :: head('Administration')}"></head>
+<body>
+<header th:replace="~{fragments :: nav}"></header>
+<main>
+    <h1>Administration</h1>
+    <div th:replace="~{fragments :: messages}"></div>
+
+    <h2>Reservations</h2>
+    <p th:if="${#lists.isEmpty(reservations)}" class="muted">No reservations yet.</p>
+    <table th:unless="${#lists.isEmpty(reservations)}">
+        <thead>
+        <tr><th>Reservation</th><th>Guest</th><th>Room</th><th>Check-in</th><th>Check-out</th>
+            <th class="num">Total</th><th>Status</th><th></th></tr>
+        </thead>
+        <tbody>
+        <tr th:each="r : ${reservations}">
+            <td th:text="${r.reservationId}">RES-1000</td>
+            <td th:text="${r.guestName}">Alex Morgan</td>
+            <td th:text="${r.roomNumber}">204</td>
+            <td th:text="${r.checkIn}">2026-12-10</td>
+            <td th:text="${r.checkOut}">2026-12-13</td>
+            <td class="num" th:text="${r.currency} + ' ' + ${r.totalPrice}">EUR 450.00</td>
+            <td><span class="state" th:classappend="${#strings.toLowerCase(r.state)}" th:text="${r.state}">CONFIRMED</span></td>
+            <td class="actions">
+                <form th:if="${r.state == 'CONFIRMED'}" th:action="@{/admin/reservations/{id}/check-in(id=${r.reservationId})}" method="post">
+                    <button type="submit" class="button small">Check in</button>
+                </form>
+                <form th:if="${r.state == 'CHECKED_IN'}" th:action="@{/admin/reservations/{id}/check-out(id=${r.reservationId})}" method="post">
+                    <button type="submit" class="button small secondary">Check out</button>
+                </form>
+            </td>
+        </tr>
+        </tbody>
+    </table>
+
+    <h2>Rooms</h2>
+    <table>
+        <thead><tr><th>Room</th><th>Type</th><th class="num">Rate</th><th>Status</th></tr></thead>
+        <tbody>
+        <tr th:each="room : ${rooms}">
+            <td th:text="${room.roomNumber}">204</td>
+            <td th:text="${room.roomType}">Deluxe</td>
+            <td class="num" th:text="${room.currency} + ' ' + ${room.nightlyRate}">EUR 100.00</td>
+            <td><span class="state" th:classappend="${#strings.toLowerCase(room.status)}" th:text="${room.status}">AVAILABLE</span></td>
+        </tr>
+        </tbody>
+    </table>
+</main>
+</body>
+</html>

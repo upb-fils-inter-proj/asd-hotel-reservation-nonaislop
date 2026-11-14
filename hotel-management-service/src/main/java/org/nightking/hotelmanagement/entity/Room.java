@@ -7,10 +7,14 @@ public class Room {
     private RoomStatus status;
 
     public Room(String roomNumber, String roomType, double nightlyRate) {
+        this(roomNumber, roomType, nightlyRate, RoomStatus.AVAILABLE);
+    }
+
+    public Room(String roomNumber, String roomType, double nightlyRate, RoomStatus status) {
         this.roomNumber = roomNumber;
         this.roomType = roomType;
         this.nightlyRate = nightlyRate;
-        this.status = RoomStatus.AVAILABLE;
+        this.status = status;
     }
 
     public String getRoomNumber() { return roomNumber; }

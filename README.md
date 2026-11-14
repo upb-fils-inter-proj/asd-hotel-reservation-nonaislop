@@ -1,89 +1,76 @@
 # Hotel Management and Reservation System — Java Proof of Concept
 
-Three Spring Boot microservices (hotel management, shop, payment), each built with clean
-architecture, demonstrating six design patterns from the UML design:
+A guest and administration web app in front of three Spring Boot microservices
+(hotel management, shop, payment). Each service is built with clean architecture and owns its
+own PostgreSQL database. The code demonstrates six design patterns from the UML design:
 Strategy, Decorator, State, Observer, Adapter, and Facade.
 
 ## Requirements
-- Docker with Compose, to run the services
+- Docker with Compose, to run everything
 - JDK 21 and Maven 3.9, to build and test locally (IntelliJ's bundled Maven works)
 
 ## Run with Docker Compose
 
-Create the API passwords once (they go to `secrets/`, which is git-ignored):
+Create the passwords once (they go to `secrets/`, which is git-ignored):
 
 ```bash
 ./scripts/generate-secrets.sh
 ```
 
-Build and start the three services:
+Build and start everything:
 
 ```bash
 docker compose up --build
 ```
 
-| Service | Port | API user | Password secret |
-|---|---|---|---|
-| `hotel-management-service` | 8080 | `front-desk` | `secrets/hotel_api_password.txt` |
-| `shop-service` | 8081 | `shop-client` | `secrets/shop_api_password.txt` |
-| `payment-service` | 8082 | `payment-client` | `secrets/payment_api_password.txt` |
+Open the web app at **http://localhost:8090**.
 
-## Try the API
+- **Guests** register, log in and book a room; they can only book while logged in.
+- **Administrators** are pre-created in the hotel database at startup. Log in as `admin` with the
+  password in `secrets/admin_password.txt` to see every reservation and room, and to check guests
+  in and out.
 
-```bash
-HOTEL_PW=$(cat secrets/hotel_api_password.txt)
-```
+| Container | Port | Purpose |
+|---|---|---|
+| `web-app` | 8090 | Guest and administration web interface |
+| `hotel-management-service` | 8080 | Rooms, accounts, reservations (REST API) |
+| `shop-service` | 8081 | Pricing and additional services (REST API) |
+| `payment-service` | 8082 | Payments (REST API) |
+| `hotel-db`, `shop-db`, `payment-db` | not published | One PostgreSQL database per service |
 
-Book room 204 (the hotel service asks the shop for the price and the payment service to charge):
+Data is kept in Docker volumes. To start from empty databases: `docker compose down -v`.
 
-```bash
-curl -u "front-desk:$HOTEL_PW" -H 'Content-Type: application/json' -X POST http://localhost:8080/api/reservations -d '{"guest":{"id":"G-01","name":"Alex Morgan","email":"alex@example.com","phone":"+40123456789"},"roomNumber":"204","checkIn":"2026-12-10","checkOut":"2026-12-13","breakfast":true,"spa":true,"airportTransfer":false}'
-```
+## Security
+- **Web app:** form login with sessions and CSRF protection. Booking pages need the `GUEST` role,
+  administration pages need `ADMIN`. The web app checks usernames and passwords with the hotel
+  management service and books under the signed-in guest's account, never an id from the form.
+- **Accounts:** guests register through the web app; passwords are stored as bcrypt hashes. The
+  administrator is created (or its password updated) from the `admin_password` secret when the
+  hotel management service starts. The service also refuses bookings for unknown guest accounts.
+- **Service APIs:** every REST API needs HTTP Basic credentials. The web app holds the hotel
+  management password; hotel management holds the shop and payment passwords.
+- **Secrets:** every password (APIs, databases, admin) is a Docker secret mounted at
+  `/run/secrets/<name>` and read by Spring through `configtree:`. Each container gets only the
+  secrets it needs. Services refuse to start without their API password.
+- To rotate a password: delete its file in `secrets/`, run `./scripts/generate-secrets.sh`,
+  then `docker compose up -d --force-recreate`. (Database passwords are set when a database is
+  first created; rotating one also needs `docker compose down -v`, which deletes the data.)
 
-Check in and check out (use the `reservationId` from the booking response):
+## Service APIs
 
-```bash
-curl -u "front-desk:$HOTEL_PW" -X POST http://localhost:8080/api/reservations/RES-1000/check-in
-```
-
-```bash
-curl -u "front-desk:$HOTEL_PW" -X POST http://localhost:8080/api/reservations/RES-1000/check-out
-```
+All routes need HTTP Basic credentials (`401` without them).
 
 | Route | Success | Errors |
 |---|---|---|
-| `POST /api/reservations` (hotel) | `201` reservation (`CONFIRMED`, or `PENDING` if payment was declined) | `400` invalid request, `404` unknown room, `409` room not available |
-| `POST /api/reservations/{id}/check-in` | `200` reservation | `404` unknown reservation, `409` wrong state |
-| `POST /api/reservations/{id}/check-out` | `200` reservation | `404` unknown reservation, `409` wrong state |
-| `POST /api/shop/quotes` (shop) | `200` total, currency, breakdown | `400` invalid request |
-| `POST /api/payments` (payment) | `200` status `APPROVED` or `DECLINED` | `400` invalid request |
-
-Every route needs HTTP Basic credentials; without them the answer is `401`.
-
-## Authentication and secrets
-- Each service protects its whole API with HTTP Basic auth and one API user.
-- Passwords are Docker secrets: Compose mounts them at `/run/secrets/<name>`, and Spring reads
-  that folder as configuration (`spring.config.import: configtree:/run/secrets/`).
-- Each container only gets the secrets it needs. The hotel management service also gets the
-  shop and payment passwords, because it calls those services.
-- A service refuses to start if its password is missing.
-- To rotate a password: delete its file in `secrets/`, run `./scripts/generate-secrets.sh`,
-  then `docker compose up -d --force-recreate`.
-
-## Run without Docker
-
-```bash
-mvn package
-```
-
-Start each jar with its password in the environment, for example:
-
-```bash
-shop_api_password=$(cat secrets/shop_api_password.txt) java -jar shop-service/target/shop-service.jar
-```
-
-The hotel management service needs `hotel_api_password`, `shop_api_password` and
-`payment_api_password`, and finds the other services on `localhost:8081` and `localhost:8082`.
+| `GET /api/rooms` (hotel) | `200` rooms with status | |
+| `GET /api/reservations[?guestId=]` (hotel) | `200` all reservations, or one guest's | |
+| `POST /api/reservations` (hotel) | `201` reservation (`CONFIRMED`, or `PENDING` if payment was declined) | `400` invalid, `404` unknown guest or room, `409` room booked for those dates |
+| `POST /api/reservations/{id}/check-in` | `200` reservation | `404` unknown, `409` wrong state |
+| `POST /api/reservations/{id}/check-out` | `200` reservation | `404` unknown, `409` wrong state |
+| `POST /api/accounts` (hotel) | `201` guest account | `400` invalid, `409` username taken |
+| `POST /api/accounts/authenticate` (hotel) | `200` account with role | `401` wrong username or password |
+| `POST /api/shop/quotes` (shop) | `200` total, currency, breakdown | `400` invalid |
+| `POST /api/payments` (payment) | `200` status `APPROVED` or `DECLINED` | `400` invalid |
 
 ## Tests
 
@@ -91,48 +78,51 @@ The hotel management service needs `hotel_api_password`, `shop_api_password` and
 mvn verify
 ```
 
-The same command runs on every push and pull request to `main`
-(`.github/workflows/tests.yml`). Each service has:
+The same command runs on every push and pull request to `main` (`.github/workflows/tests.yml`).
+Tests use an in-memory H2 database in PostgreSQL mode with the real Flyway migrations, so no
+Docker is needed.
 
 | Test | Covers |
 |---|---|
-| Use-case tests (`QuoteStayInteractorTest`, `ProcessPaymentInteractorTest`, `ReservationUseCasesTest`) | Business rules, with a recording presenter and stub gateways |
-| API tests (`ShopApiTest`, `PaymentApiTest`, `ReservationApiTest`) | Routes, HTTP status codes and authentication, through the full Spring context |
-| `ServiceClientsTest` (hotel management) | The exact HTTP calls made to the shop and payment services |
-| `ArchitectureTest` | Layer rules, no imports between services, no Spring in the core layers |
+| Use-case tests (`ReservationUseCasesTest`, `AccountUseCasesTest`, `QuoteStayInteractorTest`, `ProcessPaymentInteractorTest`) | Business rules, with recording presenters and in-memory or stub gateways |
+| API tests (`ReservationApiTest`, `ShopApiTest`, `PaymentApiTest`) | Routes, status codes and auth, through Spring and the database |
+| `PersistenceAdaptersTest` | The JPA gateway adapters against the real schema |
+| `ServiceClientsTest` | The exact HTTP calls hotel management makes to shop and payment |
+| `WebAppSecurityTest` | Pages, role rules, CSRF, login and registration in the web app |
+| `ArchitectureTest` (every module) | Layer rules, no imports between services, no frameworks in the core layers |
 
 ## Project layout
 
-| Module | Business purpose | Entry point |
+| Module | Business purpose | Database |
 |---|---|---|
-| `hotel-management-service` | Rooms, guests, reservations and their lifecycle, guest notifications | `FrontDeskController` |
-| `shop-service` | Pricing strategies and additional services | `ShopController` |
-| `payment-service` | Charging the guest through an external payment provider | `PaymentController` |
+| `web-app` | Guest and administration web interface | none |
+| `hotel-management-service` | Rooms, guest and admin accounts, reservations and their lifecycle, notifications | `hotel` |
+| `shop-service` | Pricing strategies and the additional services price list | `shop` |
+| `payment-service` | Charging the guest and recording every payment | `payment` |
 
-Each module is organised with clean architecture (`controller`, `presenter`, `model`, `usecase`,
-`entity`, `gateway`, `infrastructure`, `config`). See [docs/architecture.md](docs/architecture.md)
-for the diagrams and rules.
+Each service is organised with clean architecture (`controller`, `presenter`, `model`, `usecase`,
+`entity`, `gateway`, `infrastructure`, `config`); the database is one more adapter in
+`infrastructure`. See [docs/architecture.md](docs/architecture.md) for diagrams and rules.
 
 ## What is intentionally simplified
-- Data is stored in memory and resets when a service restarts; run one instance per service.
 - The payment gateway is simulated; no real payment is taken.
-- One room (204) is seeded at startup.
-- Room availability only looks at the room's current status, not at booked dates.
-- Auth is HTTP Basic over plain HTTP with one user per service; put HTTPS in front for anything real.
+- Three rooms are seeded by a database migration; there is no room administration yet.
+- Auth between containers is HTTP Basic over plain HTTP; put HTTPS in front for anything real.
+- Web sessions are kept in memory, so restarting the web app logs everyone out.
 
 ## Pattern map
 | Pattern | Service | Main implementation |
 |---|---|---|
 | Strategy | shop | `PricingStrategy`, `StandardPricing`, `SeasonalPricing`, `LongStayDiscountPricing` |
 | Decorator | shop | `Chargeable`, `RoomStayCharge`, `ServiceDecorator`, service decorators |
-| State | hotel management | `ReservationState` and concrete reservation states |
+| State | hotel management | `ReservationState` and concrete reservation states (also decides which states hold a room) |
 | Observer | hotel management | `ReservationObserver`, `ReservationEventPublisher`, notifier classes |
 | Adapter | payment | `PaymentProcessor`, `PayFlowGatewayAdapter`, `PayFlowGateway` |
 | Facade | hotel management | `FrontDeskController` |
 
 ## Try changing the demo
 - In `shop-service/.../config/ShopConfig.java`, replace `SeasonalPricing` with `StandardPricing` or `LongStayDiscountPricing`.
-- Toggle `breakfast`, `spa` or `airportTransfer` in the booking request to add/remove `BreakfastService`, `SpaPackage`, or `AirportTransfer`.
-- Call the payment service with `"amount": 0` to see the simulated gateway decline.
-- Book with a declined payment, then try to check in to see the State pattern reject it (`409`).
+- Tick or untick breakfast, spa or airport transfer when booking to add/remove `BreakfastService`, `SpaPackage`, or `AirportTransfer`.
+- Change a price in the shop database's `extra_prices` table and book again.
+- Try to book dates that overlap a confirmed reservation to see it refused.
 # asd-hotel-reservation-nonaislop

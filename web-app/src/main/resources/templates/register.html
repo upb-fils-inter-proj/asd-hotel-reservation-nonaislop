@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments :: head('Register')}"></head>
+<body>
+<header th:replace="~{fragments :: nav}"></header>
+<main class="narrow">
+    <h1>Create an account</h1>
+    <div th:replace="~{fragments :: messages}"></div>
+
+    <form th:action="@{/register}" th:object="${registrationForm}" method="post" class="form">
+        <label>Username <input type="text" th:field="*{username}" autocomplete="username" required></label>
+        <label>Password <input type="password" th:field="*{password}" autocomplete="new-password" minlength="8" required>
+            <small class="muted">At least 8 characters.</small></label>
+        <label>Full name <input type="text" th:field="*{name}" autocomplete="name" required></label>
+        <label>Email <input type="email" th:field="*{email}" autocomplete="email" required></label>
+        <label>Phone <input type="tel" th:field="*{phone}" autocomplete="tel" required></label>
+        <button type="submit" class="button">Register</button>
+    </form>
+    <p class="muted">Already registered? <a th:href="@{/login}">Log in</a>.</p>
+</main>
+</body>
+</html>

@@ -8,11 +8,25 @@ spring:
     # Docker secrets are mounted as files in /run/secrets; each file becomes a property
     # named after the file (e.g. hotel_api_password).
     import: optional:configtree:/run/secrets/
+  datasource:
+    url: ${HOTEL_DB_URL:jdbc:postgresql://localhost:5432/hotel}
+    username: ${HOTEL_DB_USERNAME:hotel}
+    password: ${hotel_db_password:}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: none
+  flyway:
+    locations: classpath:db/migration
 
 api:
   auth:
     username: ${HOTEL_API_USERNAME:front-desk}
     password: ${hotel_api_password:}
+
+admin:
+  username: ${ADMIN_USERNAME:admin}
+  password: ${admin_password:}
 
 services:
   shop:

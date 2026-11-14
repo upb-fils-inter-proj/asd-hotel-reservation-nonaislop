@@ -21,6 +21,7 @@
         <module>hotel-management-service</module>
         <module>shop-service</module>
         <module>payment-service</module>
+        <module>web-app</module>
     </modules>
 
     <properties>

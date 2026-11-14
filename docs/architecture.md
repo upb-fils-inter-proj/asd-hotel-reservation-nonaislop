@@ -1,14 +1,16 @@
-# Architecture: three Spring Boot services, clean architecture inside each
+# Architecture: a web app in front of three Spring Boot services
 
-The system is split into three services by business purpose. Each service is its own Maven
-module, Spring Boot application and Docker container. A service talks to another one only over
-HTTP, through that service's REST controller, with HTTP Basic auth.
+The system is split by business purpose. A web app serves guests and administrators; behind it,
+three services each own their business rules and their own PostgreSQL database. Each service is
+its own Maven module, Spring Boot application and Docker container. Services talk only over
+HTTP, through REST controllers, with HTTP Basic auth.
 
-| Service (module) | Business purpose | Entry point | Port |
+| Module | Business purpose | Entry point | Database |
 |---|---|---|---|
-| `hotel-management-service` | Rooms, guests, reservations and their lifecycle, guest notifications | `FrontDeskController` → `/api/reservations` | 8080 |
-| `shop-service` | Pricing strategies and additional services (breakfast, spa, airport transfer) | `ShopController` → `/api/shop/quotes` | 8081 |
-| `payment-service` | Charging the guest through an external payment provider | `PaymentController` → `/api/payments` | 8082 |
+| `web-app` | Guest and administration web interface | Thymeleaf pages on port 8090 | none |
+| `hotel-management-service` | Rooms, guest and admin accounts, reservations and their lifecycle, notifications | `/api/reservations`, `/api/rooms`, `/api/accounts` | `hotel` |
+| `shop-service` | Pricing strategies and the additional services price list | `/api/shop/quotes` | `shop` |
+| `payment-service` | Charging the guest and recording every payment | `/api/payments` | `payment` |
 
 Layers inside each service:
 
@@ -19,13 +21,14 @@ Layers inside each service:
 | `model` | Request/response records crossing the use case boundary | `entity` (only to build responses) |
 | `usecase` | One interface per use case, its implementation (interactor), and its presenter interface (output port) | `entity`, `model`, `gateway` |
 | `entity` | Core business objects and rules | nothing outside `entity` |
-| `gateway` | Interfaces for what the use cases need from outside | `entity` |
-| `infrastructure` | Gateway implementations: storage, external SDKs, HTTP clients of other services | `gateway`, `entity`, `model` |
+| `gateway` | Interfaces for what the use cases need from outside: repositories, other services, password hashing | `entity` |
+| `infrastructure` | Gateway implementations: the database (JPA), HTTP clients, external SDKs, notifiers | `gateway`, `entity`, `model` |
 | `config` | Spring wiring (composition root) and security | everything in the service |
 
-`entity`, `model`, `gateway` and `usecase` contain no Spring code. The shop needs nothing from
-outside, so it has no `gateway` or `infrastructure` layer. Every rule here is enforced by the
-`ArchitectureTest` in each module.
+`entity`, `model`, `gateway` and `usecase` contain no Spring, JPA or Jackson code. The web app
+has no business rules, so it has no `usecase` layer: its controllers call a
+`HotelManagementGateway` directly. Every rule here is enforced by the `ArchitectureTest` in each
+module.
 
 ## 1. How the original code was split
 
@@ -80,28 +83,34 @@ flowchart LR
     b_pay --> pa_i
 ```
 
-## 2. Inside the services and how they talk
+## 2. Inside the services, and the database as a plugin
 
 Solid arrows point in the direction of a dependency (inward, toward the entities). Dashed arrows
-mean "implements". The thick arrows are the only calls between services: HTTP with Basic auth.
+mean "implements". Each database sits behind a gateway interface: the use cases only know
+`RoomRepository`, `ExtrasCatalog`, `PaymentRepository` and so on, and a JPA adapter in
+`infrastructure` plugs PostgreSQL in. The thick arrows are the only calls between processes.
 
 ```mermaid
 flowchart LR
-    client(["API client<br/>curl · front-end"])
+    browser(["Browser<br/>guest · admin"])
+
+    subgraph WA["web-app :8090"]
+        direction TB
+        waC["<b>controller</b><br/>pages · login · registration<br/>guest + admin pages"]
+        waG["<b>gateway</b><br/>HotelManagementGateway"]
+        waI["<b>infrastructure</b><br/>HotelManagementClient"]
+        waC --> waG
+        waI -. implements .-> waG
+    end
 
     subgraph HM["hotel-management-service :8080"]
         direction TB
-        hmC["<b>controller</b><br/>FrontDeskController<br/>/api/reservations"]
-        hmP["<b>presenter</b><br/>ReservationWebPresenter<br/>ReservationViewModel"]
-        hmU["<b>usecase</b><br/>BookRoom · CheckIn · CheckOut<br/>ReservationPresenter (output port)"]
-        hmM["<b>model</b><br/>BookRoomRequest · ReservationResponse"]
-        hmE["<b>entity</b><br/>Reservation · Room · Guest<br/>lifecycle states"]
-        hmG["<b>gateway</b><br/>RoomRepository · ReservationRepository<br/>ShopGateway · PaymentGateway<br/>ReservationObserver"]
-        hmI["<b>infrastructure</b><br/>in-memory repositories · notifiers<br/>ShopServiceClient · PaymentServiceClient"]
+        hmC["<b>controller + presenter</b><br/>FrontDeskController · RoomController<br/>AccountController"]
+        hmU["<b>usecase</b><br/>BookRoom · CheckIn · CheckOut · ListReservations<br/>ListRooms · RegisterGuest · Authenticate · SeedAdmin"]
+        hmE["<b>entity</b><br/>Reservation + lifecycle · Room · Account"]
+        hmG["<b>gateway</b><br/>RoomRepository · ReservationRepository<br/>AccountRepository · PasswordHasher<br/>ShopGateway · PaymentGateway"]
+        hmI["<b>infrastructure</b><br/>JPA repositories · BCrypt<br/>ShopServiceClient · PaymentServiceClient"]
         hmC --> hmU
-        hmC --> hmP
-        hmP -. implements .-> hmU
-        hmU --> hmM
         hmU --> hmE
         hmU --> hmG
         hmI -. implements .-> hmG
@@ -109,109 +118,142 @@ flowchart LR
 
     subgraph SH["shop-service :8081"]
         direction TB
-        shC["<b>controller</b><br/>ShopController<br/>/api/shop/quotes"]
-        shP["<b>presenter</b><br/>QuoteStayWebPresenter"]
+        shC["<b>controller + presenter</b><br/>ShopController"]
         shU["<b>usecase</b><br/>QuoteStay"]
-        shE["<b>entity</b><br/>PricingPolicy + strategies<br/>Chargeable + decorators"]
+        shE["<b>entity</b><br/>pricing strategies · decorators · Extra"]
+        shG["<b>gateway</b><br/>ExtrasCatalog"]
+        shI["<b>infrastructure</b><br/>JpaExtrasCatalog"]
         shC --> shU
-        shC --> shP
-        shP -. implements .-> shU
         shU --> shE
+        shU --> shG
+        shI -. implements .-> shG
     end
 
     subgraph PA["payment-service :8082"]
         direction TB
-        paC["<b>controller</b><br/>PaymentController<br/>/api/payments"]
-        paP["<b>presenter</b><br/>PaymentWebPresenter"]
+        paC["<b>controller + presenter</b><br/>PaymentController"]
         paU["<b>usecase</b><br/>ProcessPayment"]
-        paE["<b>entity</b><br/>Payment · PaymentStatus"]
-        paG["<b>gateway</b><br/>PaymentProcessor"]
-        paI["<b>infrastructure</b><br/>PayFlowGatewayAdapter → PayFlowGateway"]
+        paE["<b>entity</b><br/>Payment"]
+        paG["<b>gateway</b><br/>PaymentProcessor · PaymentRepository"]
+        paI["<b>infrastructure</b><br/>PayFlow adapter · JpaPaymentRepository"]
         paC --> paU
-        paC --> paP
-        paP -. implements .-> paU
         paU --> paE
         paU --> paG
         paI -. implements .-> paG
     end
 
-    client -- "Basic auth<br/>front-desk" --> hmC
-    hmI == "POST /api/shop/quotes<br/>Basic auth shop-client" ==> shC
-    hmI == "POST /api/payments<br/>Basic auth payment-client" ==> paC
+    hdb[("hotel DB")]
+    sdb[("shop DB")]
+    pdb[("payment DB")]
+
+    browser -- "form login<br/>session + CSRF" --> waC
+    waI == "REST + Basic auth<br/>front-desk" ==> hmC
+    hmI == "POST /api/shop/quotes" ==> shC
+    hmI == "POST /api/payments" ==> paC
+    hmI --> hdb
+    shI --> sdb
+    paI --> pdb
 ```
 
-## 3. A booking across the three services
+## 3. A guest books a room
 
 ```mermaid
 sequenceDiagram
     autonumber
-    actor C as API client
+    actor G as Guest (browser)
+    participant W as web-app
     box Hotel management
-        participant FD as FrontDeskController
         participant BR as BookRoomInteractor
-        participant P as ReservationWebPresenter
+        participant HDB as hotel DB
     end
-    box Shop
-        participant SC as ShopController
-    end
-    box Payment
-        participant PC as PaymentController
-        participant PF as PayFlowGatewayAdapter
-    end
+    participant S as shop-service
+    participant P as payment-service
 
-    C->>FD: POST /api/reservations (Basic auth)
-    FD->>BR: execute(request, presenter)
-    BR->>SC: POST /api/shop/quotes via ShopServiceClient
-    SC-->>BR: 200 {total: 450.00}
-    BR->>BR: save reservation (PENDING)
-    BR->>PC: POST /api/payments via PaymentServiceClient
-    PC->>PF: processPayment(id, 450.00)
-    PF-->>PC: approved
-    PC-->>BR: 200 {status: APPROVED}
-    BR->>BR: confirm(), notify Email / SMS / Audit
-    BR->>P: presentBooked(ReservationResponse)
-    P-->>FD: 201 + ReservationViewModel
-    FD-->>C: 201 {state: CONFIRMED, totalPrice: 450.00}
+    G->>W: POST /login (username, password)
+    W->>BR: POST /api/accounts/authenticate
+    Note over W,BR: AuthenticateInteractor checks the bcrypt hash in the hotel DB
+    BR-->>W: 200 account (role GUEST)
+    W-->>G: session cookie, redirect to My reservations
+    G->>W: POST /reservations (room, dates, extras) + CSRF token
+    W->>BR: POST /api/reservations (guestId from the session)
+    BR->>HDB: guest account exists? room booked for those dates?
+    BR->>S: POST /api/shop/quotes
+    S-->>BR: 200 {total: 450.00} (prices from the shop DB)
+    BR->>HDB: save reservation (PENDING)
+    BR->>P: POST /api/payments
+    P-->>BR: 200 {status: APPROVED} (recorded in the payment DB)
+    BR->>HDB: save reservation (CONFIRMED)
+    Note over BR: notify Email / SMS / Audit observers
+    BR-->>W: 201 reservation
+    W-->>G: "Reservation RES-1000 is CONFIRMED. Total: EUR 450.00."
 ```
 
 ## 4. Deployment with Docker Compose
 
-Each service runs in its own container. Each container gets only the secrets it needs; the
-hotel management service also holds the passwords of the services it calls.
+Only the web app is meant for people; the service APIs are published for development. Databases
+are not published at all. Each container gets only the secrets it needs.
 
 ```mermaid
 flowchart LR
-    client(["API client"])
+    browser(["Browser"])
     subgraph compose["docker compose: hotel-reservation"]
+        wa["web-app<br/>:8090"]
         hm["hotel-management-service<br/>:8080"]
         sh["shop-service<br/>:8081"]
         pa["payment-service<br/>:8082"]
+        hdb[("hotel-db")]
+        sdb[("shop-db")]
+        pdb[("payment-db")]
     end
-    s1[/"hotel_api_password"/]
-    s2[/"shop_api_password"/]
-    s3[/"payment_api_password"/]
-
-    client --> hm
+    browser --> wa
+    wa --> hm
     hm --> sh
     hm --> pa
-    s1 -. secret .-> hm
-    s2 -. secret .-> hm
-    s3 -. secret .-> hm
-    s2 -. secret .-> sh
-    s3 -. secret .-> pa
+    hm --> hdb
+    sh --> sdb
+    pa --> pdb
 ```
+
+| Container | Secrets it receives |
+|---|---|
+| `web-app` | `hotel_api_password` (to call hotel management) |
+| `hotel-management-service` | `hotel_api_password`, `hotel_db_password`, `admin_password`, `shop_api_password`, `payment_api_password` |
+| `shop-service` | `shop_api_password`, `shop_db_password` |
+| `payment-service` | `payment_api_password`, `payment_db_password` |
+| `hotel-db` / `shop-db` / `payment-db` | its own `*_db_password` |
+
+## Databases and consistency
+
+Each service owns one database and no other service reads it:
+
+| Database | Tables | Owner |
+|---|---|---|
+| `hotel` | `rooms`, `accounts`, `reservations` | hotel management |
+| `shop` | `extra_prices` | shop |
+| `payment` | `payments` | payment |
+
+Schemas are created by Flyway migrations in each service (`src/main/resources/db/migration`).
+
+No data is duplicated across databases, so there is nothing to keep in sync. The one flow that
+touches two databases is a booking: the reservation is saved as `PENDING` in the hotel database,
+the payment is recorded in the payment database, and only an approved payment moves the
+reservation to `CONFIRMED`. If the payment is declined the reservation stays `PENDING` and does
+not hold the room, so a failure leaves both databases in a valid state. If more data ever has to
+be shared, the services would exchange events and accept eventual consistency rather than share a
+database.
 
 ## Rules that keep the services independent
 
 1. **Dependencies point inward.** `controller → usecase → entity`. Use cases reach the outside
-   world only through `gateway` interfaces and send results out only through their presenter
-   interface.
-2. **Entities never leave a service.** Use cases hand `model` records to presenters, and
-   presenters turn them into view models for JSON.
-3. **No shared code between services.** Each service is a separate module. The hotel management
-   clients keep their own copy of the shop and payment request/response shapes.
-4. **Every call is authenticated.** Each API requires HTTP Basic auth; passwords are Docker
-   secrets, never committed.
+   world, including their database, only through `gateway` interfaces, and send results out only
+   through their presenter interface.
+2. **The database is a plugin.** JPA entities and Spring Data repositories live in
+   `infrastructure`; domain entities know nothing about persistence. The use-case tests run the
+   same rules on in-memory gateways.
+3. **One database per service, no shared code.** Each service is a separate module with its own
+   schema; the hotel management clients keep their own copy of the shop and payment API shapes.
+4. **Every call is authenticated.** People log in to the web app; services call each other with
+   HTTP Basic credentials. All passwords are Docker secrets, never committed.
 5. **`config` is the composition root.** It is the only place that knows every concrete class.
 
 ## Where every original class went
@@ -221,14 +263,14 @@ flowchart LR
 | `frontdesk.FrontDesk` | Split: `FrontDeskController` + `BookRoom`, `CheckIn`, `CheckOut` use cases in hotel management; the pricing and extras part moved to the shop's `QuoteStayInteractor` |
 | `guest.Guest`, `room.Room`, `room.RoomStatus`, `reservation.Reservation` | `hotelmanagement.entity` |
 | `reservation.lifecycle.*` | `hotelmanagement.entity.lifecycle` |
-| `room.RoomAvailabilityService` | `Room.isAvailable()` |
+| `room.RoomAvailabilityService` | Date-based availability: `Reservation.blocks(from, to)` with `ReservationState.holdsRoom()` |
 | `room.RoomService` | Room status updates inside `CheckInInteractor` / `CheckOutInteractor` |
-| `reservation.ReservationService` | Id sequence in `InMemoryReservationRepository.nextId()` |
+| `reservation.ReservationService` | Reservation numbers from a database sequence (`ReservationRepository.nextId()`) |
 | `notification.ReservationObserver` | `hotelmanagement.gateway` |
 | `notification.ReservationEventPublisher` | `hotelmanagement.usecase` |
 | `notification.EmailNotifier`, `SmsNotifier`, `AuditLogObserver` | `hotelmanagement.infrastructure` |
 | `pricing.*` | `shop.entity.pricing` |
-| `charges.*` | `shop.entity.charges` |
+| `charges.*` | `shop.entity.charges` (prices now come from the shop database) |
 | `payment.PaymentProcessor` | `payment.gateway` |
 | `payment.PayFlowGateway`, `PayFlowGatewayAdapter` | `payment.infrastructure` |
 | `payment.PaymentService` | `payment.usecase.ProcessPaymentInteractor` |

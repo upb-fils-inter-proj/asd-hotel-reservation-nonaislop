@@ -10,11 +10,18 @@ import org.nightking.shop.entity.pricing.PricingPolicy;
 import org.nightking.shop.entity.pricing.PricingStrategy;
 import org.nightking.shop.entity.pricing.SeasonalPricing;
 import org.nightking.shop.entity.pricing.StandardPricing;
+import org.nightking.shop.gateway.ExtrasCatalog;
 import org.nightking.shop.model.StayQuoteRequest;
 import org.nightking.shop.model.StayQuoteResponse;
 
 class QuoteStayInteractorTest {
     private static final double DELTA = 1e-9;
+    /** Same prices as the shop database seed: breakfast 15/night, spa 45, airport transfer 30. */
+    private static final ExtrasCatalog PRICES = extra -> switch (extra) {
+        case BREAKFAST -> 15.0;
+        case SPA -> 45.0;
+        case AIRPORT_TRANSFER -> 30.0;
+    };
 
     static class RecordingPresenter implements QuoteStayPresenter {
         StayQuoteResponse quote;
@@ -27,7 +34,7 @@ class QuoteStayInteractorTest {
     private static RecordingPresenter quote(PricingStrategy strategy, double rate, int nights,
                                             boolean breakfast, boolean spa, boolean transfer) {
         RecordingPresenter presenter = new RecordingPresenter();
-        new QuoteStayInteractor(new PricingPolicy(strategy))
+        new QuoteStayInteractor(new PricingPolicy(strategy), PRICES)
                 .execute(new StayQuoteRequest(rate, nights, breakfast, spa, transfer), presenter);
         return presenter;
     }

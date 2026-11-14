@@ -1,29 +1,32 @@
 package org.nightking.hotelmanagement.usecase;
 
 import java.util.Optional;
-import org.nightking.hotelmanagement.entity.Guest;
+import org.nightking.hotelmanagement.entity.Account;
 import org.nightking.hotelmanagement.entity.Reservation;
 import org.nightking.hotelmanagement.entity.Room;
+import org.nightking.hotelmanagement.gateway.AccountRepository;
 import org.nightking.hotelmanagement.gateway.PaymentGateway;
 import org.nightking.hotelmanagement.gateway.ReservationRepository;
 import org.nightking.hotelmanagement.gateway.RoomRepository;
 import org.nightking.hotelmanagement.gateway.ShopGateway;
 import org.nightking.hotelmanagement.model.BookRoomRequest;
-import org.nightking.hotelmanagement.model.GuestDetails;
 import org.nightking.hotelmanagement.model.ReservationResponse;
 
 public class BookRoomInteractor implements BookRoomUseCase {
+    private final AccountRepository accounts;
     private final RoomRepository rooms;
     private final ReservationRepository reservations;
     private final ShopGateway shop;
     private final PaymentGateway payment;
     private final ReservationEventPublisher eventPublisher;
 
-    public BookRoomInteractor(RoomRepository rooms,
+    public BookRoomInteractor(AccountRepository accounts,
+                              RoomRepository rooms,
                               ReservationRepository reservations,
                               ShopGateway shop,
                               PaymentGateway payment,
                               ReservationEventPublisher eventPublisher) {
+        this.accounts = accounts;
         this.rooms = rooms;
         this.reservations = reservations;
         this.shop = shop;
@@ -33,9 +36,21 @@ public class BookRoomInteractor implements BookRoomUseCase {
 
     @Override
     public void execute(BookRoomRequest request, ReservationPresenter presenter) {
-        if (request.guest() == null || request.roomNumber() == null
+        if (request.guestId() == null || request.roomNumber() == null
                 || request.checkIn() == null || request.checkOut() == null) {
-            presenter.presentInvalidRequest("guest, roomNumber, checkIn and checkOut are required.");
+            presenter.presentInvalidRequest("guestId, roomNumber, checkIn and checkOut are required.");
+            return;
+        }
+
+        int nights = (int) (request.checkOut().toEpochDay() - request.checkIn().toEpochDay());
+        if (nights <= 0) {
+            presenter.presentInvalidRequest(reject("Check-out must be after check-in."));
+            return;
+        }
+
+        Optional<Account> account = accounts.findById(request.guestId());
+        if (account.isEmpty()) {
+            presenter.presentNotFound(reject("Guest account " + request.guestId() + " does not exist. Register first."));
             return;
         }
 
@@ -46,23 +61,17 @@ public class BookRoomInteractor implements BookRoomUseCase {
         }
         Room room = found.get();
 
-        if (!room.isAvailable()) {
-            presenter.presentRejected(reject("Room " + room.getRoomNumber() + " is not available."));
-            return;
-        }
-
-        int nights = (int) (request.checkOut().toEpochDay() - request.checkIn().toEpochDay());
-        if (nights <= 0) {
-            presenter.presentInvalidRequest(reject("Check-out must be after check-in."));
+        boolean taken = reservations.findByRoomNumber(room.getRoomNumber()).stream()
+                .anyMatch(existing -> existing.blocks(request.checkIn(), request.checkOut()));
+        if (taken) {
+            presenter.presentRejected(reject("Room " + room.getRoomNumber() + " is already booked for those dates."));
             return;
         }
 
         double total = shop.quoteStay(room.getNightlyRate(), nights,
                 request.breakfast(), request.spa(), request.airportTransfer());
 
-        GuestDetails details = request.guest();
-        Guest guest = new Guest(details.id(), details.name(), details.email(), details.phone());
-        Reservation reservation = new Reservation(reservations.nextId(), guest, room,
+        Reservation reservation = new Reservation(reservations.nextId(), account.get().asGuest(), room,
                 request.checkIn(), request.checkOut(), total);
         reservations.save(reservation);
 

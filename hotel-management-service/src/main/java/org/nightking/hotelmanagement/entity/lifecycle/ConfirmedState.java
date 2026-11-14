@@ -14,6 +14,7 @@ public class ConfirmedState implements ReservationState {
         System.out.println("Confirmed reservation cancelled.");
     }
     public String getName() { return "CONFIRMED"; }
+    @Override public boolean holdsRoom() { return true; }
     private void reject(String action) {
         System.out.println("Cannot " + action + " before check-in.");
     }

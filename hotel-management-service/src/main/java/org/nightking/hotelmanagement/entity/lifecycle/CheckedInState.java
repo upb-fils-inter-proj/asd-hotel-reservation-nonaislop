@@ -11,4 +11,5 @@ public class CheckedInState implements ReservationState {
     }
     public void cancel(Reservation r) { System.out.println("Cannot cancel after check-in."); }
     public String getName() { return "CHECKED_IN"; }
+    @Override public boolean holdsRoom() { return true; }
 }

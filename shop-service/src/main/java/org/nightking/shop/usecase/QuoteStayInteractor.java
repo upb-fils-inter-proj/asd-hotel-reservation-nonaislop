@@ -1,23 +1,23 @@
 package org.nightking.shop.usecase;
 
+import org.nightking.shop.entity.Extra;
 import org.nightking.shop.entity.charges.AirportTransfer;
 import org.nightking.shop.entity.charges.BreakfastService;
 import org.nightking.shop.entity.charges.Chargeable;
 import org.nightking.shop.entity.charges.RoomStayCharge;
 import org.nightking.shop.entity.charges.SpaPackage;
 import org.nightking.shop.entity.pricing.PricingPolicy;
+import org.nightking.shop.gateway.ExtrasCatalog;
 import org.nightking.shop.model.StayQuoteRequest;
 import org.nightking.shop.model.StayQuoteResponse;
 
 public class QuoteStayInteractor implements QuoteStayUseCase {
-    private static final double BREAKFAST_PRICE_PER_NIGHT = 15.0;
-    private static final double SPA_PACKAGE_PRICE = 45.0;
-    private static final double AIRPORT_TRANSFER_PRICE = 30.0;
-
     private final PricingPolicy pricingPolicy;
+    private final ExtrasCatalog extras;
 
-    public QuoteStayInteractor(PricingPolicy pricingPolicy) {
+    public QuoteStayInteractor(PricingPolicy pricingPolicy, ExtrasCatalog extras) {
         this.pricingPolicy = pricingPolicy;
+        this.extras = extras;
     }
 
     @Override
@@ -30,9 +30,9 @@ public class QuoteStayInteractor implements QuoteStayUseCase {
         double roomPrice = pricingPolicy.calculate(request.nightlyRate(), request.nights());
         Chargeable charge = new RoomStayCharge(roomPrice);
 
-        if (request.breakfast()) charge = new BreakfastService(charge, BREAKFAST_PRICE_PER_NIGHT * request.nights());
-        if (request.spa()) charge = new SpaPackage(charge, SPA_PACKAGE_PRICE);
-        if (request.airportTransfer()) charge = new AirportTransfer(charge, AIRPORT_TRANSFER_PRICE);
+        if (request.breakfast()) charge = new BreakfastService(charge, extras.priceOf(Extra.BREAKFAST) * request.nights());
+        if (request.spa()) charge = new SpaPackage(charge, extras.priceOf(Extra.SPA));
+        if (request.airportTransfer()) charge = new AirportTransfer(charge, extras.priceOf(Extra.AIRPORT_TRANSFER));
 
         System.out.println("Charge breakdown: " + charge.getDescription());
         System.out.printf("Total: EUR %.2f%n", charge.getCost());
