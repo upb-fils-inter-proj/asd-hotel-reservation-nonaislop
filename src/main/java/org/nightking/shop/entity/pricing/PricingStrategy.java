@@ -1,0 +1,6 @@
+package org.nightking.shop.entity.pricing;
+
+public interface PricingStrategy {
+    double calculatePrice(double nightlyRate, int numberOfNights);
+    String getName();
+}
