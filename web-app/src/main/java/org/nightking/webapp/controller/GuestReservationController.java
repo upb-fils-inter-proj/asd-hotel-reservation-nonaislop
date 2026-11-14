@@ -8,12 +8,12 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.ModelAttribute;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 
-/** Pages for signed-in guests: book a room and see their own reservations. */
+/** A signed-in guest's own reservations, with cancellation. */
 @Controller
 @RequestMapping("/reservations")
 public class GuestReservationController {
@@ -25,31 +25,21 @@ public class GuestReservationController {
 
     @GetMapping
     public String myReservations(@AuthenticationPrincipal Account guest, Model model) {
-        model.addAttribute("reservations", hotel.reservationsOf(guest.id()));
+        model.addAttribute("reservations", hotel.reservationsOf(guest.id()).stream()
+                .filter(reservation -> !reservation.wasNeverPaid())
+                .toList());
         return "reservations";
     }
 
-    @GetMapping("/new")
-    public String bookingForm(Model model) {
-        model.addAttribute("bookingForm", new BookingForm());
-        model.addAttribute("rooms", hotel.rooms());
-        return "book";
-    }
-
-    @PostMapping
-    public String book(@AuthenticationPrincipal Account guest, @ModelAttribute BookingForm bookingForm,
-                       Model model, RedirectAttributes redirect) {
-        Reservation reservation;
+    @PostMapping("/{id}/cancel")
+    public String cancel(@PathVariable String id, @AuthenticationPrincipal Account guest, RedirectAttributes redirect) {
         try {
-            // The guest id always comes from the signed-in session, never from the form.
-            reservation = hotel.book(bookingForm.toRequest(guest.id()));
+            Reservation cancelled = hotel.cancel(id, guest.id());
+            redirect.addFlashAttribute("message", "Reservation " + cancelled.reservationId() + " is cancelled. "
+                    + cancelled.currency() + " " + cancelled.totalPrice() + " has been refunded.");
         } catch (HotelApiException e) {
-            model.addAttribute("error", e.getMessage());
-            model.addAttribute("rooms", hotel.rooms());
-            return "book";
+            redirect.addFlashAttribute("error", e.getMessage());
         }
-        redirect.addFlashAttribute("message", "Reservation " + reservation.reservationId() + " is "
-                + reservation.state() + ". Total: " + reservation.currency() + " " + reservation.totalPrice() + ".");
         return "redirect:/reservations";
     }
 }

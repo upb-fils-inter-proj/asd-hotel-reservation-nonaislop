@@ -1,5 +1,5 @@
 package org.nightking.payment.entity;
 
 public enum PaymentStatus {
-    PENDING, APPROVED, DECLINED
+    PENDING, APPROVED, DECLINED, REFUNDED
 }

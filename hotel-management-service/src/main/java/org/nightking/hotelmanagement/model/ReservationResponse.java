@@ -11,7 +11,9 @@ public record ReservationResponse(String reservationId,
                                   LocalDate checkIn,
                                   LocalDate checkOut,
                                   double totalPrice,
-                                  String state) {
+                                  String state,
+                                  String paymentReference,
+                                  String paidWith) {
 
     public static ReservationResponse from(Reservation reservation) {
         return new ReservationResponse(
@@ -22,6 +24,8 @@ public record ReservationResponse(String reservationId,
                 reservation.getCheckInDate(),
                 reservation.getCheckOutDate(),
                 reservation.getTotalPrice(),
-                reservation.getState().getName());
+                reservation.getState().getName(),
+                reservation.getPaymentReference(),
+                reservation.getPaidWith());
     }
 }

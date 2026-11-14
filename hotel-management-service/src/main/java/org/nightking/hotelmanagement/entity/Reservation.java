@@ -12,6 +12,8 @@ public class Reservation {
     private final LocalDate checkOutDate;
     private final double totalPrice;
     private ReservationState state;
+    private String paymentReference;
+    private String paidWith;
 
     public Reservation(String id, Guest guest, Room room, LocalDate checkInDate,
                        LocalDate checkOutDate, double totalPrice) {
@@ -32,6 +34,14 @@ public class Reservation {
     public double getTotalPrice() { return totalPrice; }
     public ReservationState getState() { return state; }
     public void setState(ReservationState state) { this.state = state; }
+    public String getPaymentReference() { return paymentReference; }
+    public String getPaidWith() { return paidWith; }
+
+    /** Links the reservation to the payment that paid for it (needed for refunds). */
+    public void recordPayment(String paymentReference, String paidWith) {
+        this.paymentReference = paymentReference;
+        this.paidWith = paidWith;
+    }
 
     /** True if this reservation keeps the room booked on any night between the given dates. */
     public boolean blocks(LocalDate from, LocalDate to) {

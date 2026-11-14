@@ -174,18 +174,28 @@ sequenceDiagram
     Note over W,BR: AuthenticateInteractor checks the bcrypt hash in the hotel DB
     BR-->>W: 200 account (role GUEST)
     W-->>G: session cookie, redirect to My reservations
-    G->>W: POST /reservations (room, dates, extras) + CSRF token
-    W->>BR: POST /api/reservations (guestId from the session)
-    BR->>HDB: guest account exists? room booked for those dates?
+    G->>W: search dates, choose room, pick extras
+    W->>BR: GET /api/rooms/available, POST /api/reservations/quote
     BR->>S: POST /api/shop/quotes
-    S-->>BR: 200 {total: 450.00} (prices from the shop DB)
-    BR->>HDB: save reservation (PENDING)
-    BR->>P: POST /api/payments
-    P-->>BR: 200 {status: APPROVED} (recorded in the payment DB)
-    BR->>HDB: save reservation (CONFIRMED)
-    Note over BR: notify Email / SMS / Audit observers
-    BR-->>W: 201 reservation
-    W-->>G: "Reservation RES-1000 is CONFIRMED. Total: EUR 450.00."
+    S-->>W: total + breakdown (prices from the shop DB)
+    G->>W: POST /book/204/confirm (card) + CSRF token
+    W->>BR: POST /api/reservations (guestId from the session, card)
+    BR->>HDB: guest exists? dates valid? room free for those nights?
+    BR->>HDB: save PENDING + hold room_nights (unique per room and night)
+    BR->>P: POST /api/payments (card)
+    Note over P: validate card, charge via PayFlow adapter,<br/>store brand + last 4 only
+    alt card approved
+        P-->>BR: 200 {status: APPROVED, transactionId}
+        BR->>HDB: save CONFIRMED + payment reference
+        Note over BR: notify Email / SMS / Audit observers
+        BR-->>W: 201 reservation
+        W-->>G: "Payment approved (Visa •••• 4242). Reservation confirmed."
+    else card declined
+        P-->>BR: 200 {status: DECLINED, declineReason}
+        BR->>HDB: save CANCELLED, release room_nights
+        BR-->>W: 402 "Payment declined: Insufficient funds."
+        W-->>G: back to review with the reason
+    end
 ```
 
 ## 4. Deployment with Docker Compose
@@ -228,19 +238,31 @@ Each service owns one database and no other service reads it:
 
 | Database | Tables | Owner |
 |---|---|---|
-| `hotel` | `rooms`, `accounts`, `reservations` | hotel management |
+| `hotel` | `rooms`, `accounts`, `reservations`, `room_nights` | hotel management |
 | `shop` | `extra_prices` | shop |
-| `payment` | `payments` | payment |
+| `payment` | `payments` (brand and last four digits only, never full card numbers) | payment |
 
 Schemas are created by Flyway migrations in each service (`src/main/resources/db/migration`).
 
-No data is duplicated across databases, so there is nothing to keep in sync. The one flow that
-touches two databases is a booking: the reservation is saved as `PENDING` in the hotel database,
-the payment is recorded in the payment database, and only an approved payment moves the
-reservation to `CONFIRMED`. If the payment is declined the reservation stays `PENDING` and does
-not hold the room, so a failure leaves both databases in a valid state. If more data ever has to
-be shared, the services would exchange events and accept eventual consistency rather than share a
-database.
+No data is duplicated across databases, so there is nothing to keep in sync. Two flows touch two
+databases, and both are ordered so that a failure at any step leaves each database valid:
+
+- **Booking:** the reservation is saved as `PENDING` and holds its nights in the hotel database;
+  then the payment service charges the card and records the payment. Approved → the reservation
+  becomes `CONFIRMED` and keeps the payment reference. Declined (or the payment service is
+  unreachable) → the reservation becomes `CANCELLED` and releases its nights.
+- **Cancellation:** the refund is made first; the reservation is saved as `CANCELLED` only after
+  the payment service confirms it.
+
+**No double bookings.** `room_nights` (room, night, reservation) has a primary key on
+(room, night). The JPA adapter writes those rows in the same transaction as the reservation while
+its state holds the room (pending, confirmed, checked in) and deletes them otherwise. A second
+reservation for any of the same nights violates the key, the adapter reports
+`RoomUnavailableException`, and the use case answers "already booked" — even when two bookings
+pass the availability check at the same moment.
+
+If more data ever has to be shared, the services would exchange events and accept eventual
+consistency rather than share a database.
 
 ## Rules that keep the services independent
 

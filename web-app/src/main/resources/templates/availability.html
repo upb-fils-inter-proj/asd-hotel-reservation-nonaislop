@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+<head th:replace="~{fragments :: head('Availability')}"></head>
+<body>
+<header th:replace="~{fragments :: nav}"></header>
+<main>
+    <h1>Availability</h1>
+    <form th:replace="~{fragments :: search}"></form>
+    <div th:replace="~{fragments :: messages}"></div>
+
+    <th:block th:if="${availability}">
+        <p class="lead">
+            <span th:text="${availability.nights}">3</span> night(s),
+            <span th:text="${availability.checkIn}">2026-12-10</span> to <span th:text="${availability.checkOut}">2026-12-13</span>.
+            <span th:if="${#lists.isEmpty(availability.rooms)}">No rooms are free for these dates. Try other dates.</span>
+        </p>
+        <p sec:authorize="isAnonymous()" class="muted" th:unless="${#lists.isEmpty(availability.rooms)}">
+            You'll be asked to log in or register when you choose a room.</p>
+
+        <div class="cards">
+            <article class="card" th:each="room : ${availability.rooms}">
+                <h3 th:text="${room.roomType}">Deluxe</h3>
+                <p class="muted">Room <span th:text="${room.roomNumber}">204</span></p>
+                <p class="price"><span th:text="${room.currency}">EUR</span> <span th:text="${room.nightlyRate}">100.00</span>
+                    <span class="muted">/ night</span></p>
+                <a class="button" th:href="@{/book/{room}(room=${room.roomNumber}, checkIn=${availability.checkIn}, checkOut=${availability.checkOut})}">Choose</a>
+            </article>
+        </div>
+    </th:block>
+</main>
+</body>
+</html>

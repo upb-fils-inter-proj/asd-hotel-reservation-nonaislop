@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments :: head('Review and pay')}"></head>
+<body>
+<header th:replace="~{fragments :: nav}"></header>
+<main class="narrow">
+    <p class="steps">1. Extras · <strong>2. Review and pay</strong> · 3. Confirmation</p>
+    <h1>Review and pay</h1>
+    <div th:replace="~{fragments :: messages}"></div>
+
+    <section class="summary">
+        <dl>
+            <dt>Room</dt><dd th:text="${quote.roomNumber} + ' · ' + ${quote.roomType}">204 · Deluxe</dd>
+            <dt>Dates</dt><dd th:text="${quote.checkIn} + ' to ' + ${quote.checkOut} + ' (' + ${quote.nights} + ' nights)'">2026-12-10 to 2026-12-13</dd>
+            <dt>Includes</dt><dd th:text="${quote.breakdown}">Room stay + Breakfast</dd>
+            <dt>Total</dt><dd class="price" th:text="${quote.currency} + ' ' + ${quote.total}">EUR 450.00</dd>
+        </dl>
+    </section>
+
+    <form th:action="@{/book/{room}/confirm(room=${quote.roomNumber})}" th:object="${bookingForm}" method="post" class="form" autocomplete="on">
+        <input type="hidden" th:field="*{checkIn}">
+        <input type="hidden" th:field="*{checkOut}">
+        <input type="hidden" th:field="*{breakfast}">
+        <input type="hidden" th:field="*{spa}">
+        <input type="hidden" th:field="*{airportTransfer}">
+
+        <fieldset>
+            <legend>Card payment</legend>
+            <label>Name on card <input type="text" th:field="*{cardHolder}" autocomplete="cc-name" required></label>
+            <label>Card number <input type="text" th:field="*{cardNumber}" inputmode="numeric" autocomplete="cc-number"
+                                      placeholder="4242 4242 4242 4242" required></label>
+            <div class="row three">
+                <label>Month <input type="number" th:field="*{expiryMonth}" min="1" max="12" autocomplete="cc-exp-month" required></label>
+                <label>Year <input type="number" th:field="*{expiryYear}" th:min="${currentYear}" autocomplete="cc-exp-year" required></label>
+                <label>CVC <input type="text" th:field="*{cvc}" inputmode="numeric" maxlength="4" autocomplete="cc-csc" required></label>
+            </div>
+        </fieldset>
+        <button type="submit" class="button" th:text="'Pay ' + ${quote.currency} + ' ' + ${quote.total}">Pay EUR 450.00</button>
+    </form>
+
+    <details class="testcards">
+        <summary>This is a simulated payment system: test cards</summary>
+        <ul>
+            <li><code>4242 4242 4242 4242</code> approved</li>
+            <li><code>4000 0000 0000 0002</code> declined</li>
+            <li><code>4000 0000 0000 9995</code> insufficient funds</li>
+            <li><code>4000 0000 0000 0069</code> expired card</li>
+        </ul>
+        <p class="muted">Use any future expiry date and any 3-digit CVC. No real money moves.</p>
+    </details>
+</main>
+</body>
+</html>

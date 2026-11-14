@@ -26,12 +26,15 @@ public class ReservationJpaEntity {
     private LocalDate checkOut;
     private BigDecimal totalPrice;
     private String state;
+    private String paymentReference;
+    private String paidWith;
 
     protected ReservationJpaEntity() {
     }
 
     ReservationJpaEntity(String id, AccountJpaEntity guest, RoomJpaEntity room, LocalDate checkIn,
-                         LocalDate checkOut, BigDecimal totalPrice, String state) {
+                         LocalDate checkOut, BigDecimal totalPrice, String state,
+                         String paymentReference, String paidWith) {
         this.id = id;
         this.guest = guest;
         this.room = room;
@@ -39,6 +42,8 @@ public class ReservationJpaEntity {
         this.checkOut = checkOut;
         this.totalPrice = totalPrice;
         this.state = state;
+        this.paymentReference = paymentReference;
+        this.paidWith = paidWith;
     }
 
     String getId() { return id; }
@@ -48,4 +53,6 @@ public class ReservationJpaEntity {
     LocalDate getCheckOut() { return checkOut; }
     BigDecimal getTotalPrice() { return totalPrice; }
     String getState() { return state; }
+    String getPaymentReference() { return paymentReference; }
+    String getPaidWith() { return paidWith; }
 }

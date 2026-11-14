@@ -84,3 +84,24 @@ th { font-size: 0.85rem; color: var(--muted); font-weight: 600; }
     table { display: block; overflow-x: auto; }
     .row { grid-template-columns: 1fr; }
 }
+
+/* booking flow */
+.search { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; background: var(--surface);
+          border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+.search label { display: flex; flex-direction: column; gap: 4px; font-weight: 500; }
+.search input { font: inherit; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; }
+.card h3 { margin: 0; }
+.card .button { margin-top: 8px; }
+.steps { color: var(--muted); font-size: 0.9rem; }
+.steps strong { color: var(--text); }
+.summary { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+.summary dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 0; }
+.summary dt { color: var(--muted); }
+.summary dd { margin: 0; }
+.row.three { grid-template-columns: 1fr 1fr 1fr; }
+.actions form { display: inline-block; margin-right: 6px; }
+.button.danger { background: #8a1f1f; }
+.testcards { margin-top: 16px; background: var(--surface); border: 1px dashed var(--border); border-radius: 8px; padding: 12px 16px; }
+.testcards summary { cursor: pointer; font-weight: 500; }
+.state.completed { background: #eceae5; }
+@media (max-width: 640px) { .row.three { grid-template-columns: 1fr 1fr; } }

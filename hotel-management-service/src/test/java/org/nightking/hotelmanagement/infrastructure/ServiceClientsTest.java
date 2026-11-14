@@ -13,6 +13,8 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import org.junit.jupiter.api.Test;
+import org.nightking.hotelmanagement.gateway.PaymentGateway;
+import org.nightking.hotelmanagement.gateway.ShopGateway.StayQuote;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
@@ -21,6 +23,8 @@ import org.springframework.web.client.RestClient;
 
 /** Checks the HTTP contract the hotel management service uses to call the shop and payment services. */
 class ServiceClientsTest {
+    private static final PaymentGateway.Card CARD =
+            new PaymentGateway.Card("Alex Morgan", "4242424242424242", 12, 2030, "123");
 
     private static String basic(String user, String password) {
         return "Basic " + Base64.getEncoder().encodeToString((user + ":" + password).getBytes(StandardCharsets.UTF_8));
@@ -38,17 +42,17 @@ class ServiceClientsTest {
                 .andExpect(jsonPath("$.nightlyRate").value(100.0))
                 .andExpect(jsonPath("$.nights").value(3))
                 .andExpect(jsonPath("$.breakfast").value(true))
-                .andExpect(jsonPath("$.spa").value(true))
-                .andExpect(jsonPath("$.airportTransfer").value(false))
-                .andRespond(withSuccess("{\"total\": 450.00, \"currency\": \"EUR\", \"breakdown\": \"Room stay\"}",
+                .andRespond(withSuccess("{\"total\": 450.00, \"currency\": \"EUR\", \"breakdown\": \"Room stay + Breakfast\"}",
                         MediaType.APPLICATION_JSON));
 
-        assertEquals(450.0, client.quoteStay(100.0, 3, true, true, false), 1e-9);
+        StayQuote quote = client.quoteStay(100.0, 3, true, true, false);
+        assertEquals(450.0, quote.total(), 1e-9);
+        assertEquals("Room stay + Breakfast", quote.breakdown());
         server.verify();
     }
 
     @Test
-    void paymentClientMapsApprovedAndDeclined() {
+    void paymentClientSendsTheCardAndMapsTheResult() {
         RestClient.Builder builder = RestClient.builder();
         MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
         PaymentServiceClient client = new PaymentServiceClient(builder, "http://payment-service:8082", "payment-client", "s3cret");
@@ -58,15 +62,46 @@ class ServiceClientsTest {
                 .andExpect(header(HttpHeaders.AUTHORIZATION, basic("payment-client", "s3cret")))
                 .andExpect(jsonPath("$.reservationId").value("RES-1000"))
                 .andExpect(jsonPath("$.amount").value(450.0))
-                .andRespond(withSuccess("{\"reservationId\": \"RES-1000\", \"amount\": 450.00, \"status\": \"APPROVED\"}",
+                .andExpect(jsonPath("$.card.number").value("4242424242424242"))
+                .andExpect(jsonPath("$.card.expiryMonth").value(12))
+                .andRespond(withSuccess("""
+                        {"transactionId": "PAY-1", "reservationId": "RES-1000", "amount": 450.00, "currency": "EUR",
+                         "status": "APPROVED", "declineReason": null, "card": "Visa •••• 4242"}""",
                         MediaType.APPLICATION_JSON));
         server.expect(requestTo("http://payment-service:8082/api/payments"))
-                .andRespond(withSuccess("{\"reservationId\": \"RES-1001\", \"amount\": 0, \"status\": \"DECLINED\"}",
+                .andRespond(withSuccess("""
+                        {"transactionId": "PAY-2", "status": "DECLINED", "declineReason": "Insufficient funds.", "card": "Visa •••• 9995"}""",
                         MediaType.APPLICATION_JSON));
 
-        assertTrue(client.pay("RES-1000", 450.0));
-        assertFalse(client.pay("RES-1001", 0.0));
+        PaymentGateway.ChargeResult approved = client.charge("RES-1000", 450.0, CARD);
+        assertTrue(approved.approved());
+        assertEquals("PAY-1", approved.paymentReference());
+        assertEquals("Visa •••• 4242", approved.paidWith());
+
+        PaymentGateway.ChargeResult declined = client.charge("RES-1001", 450.0, CARD);
+        assertFalse(declined.approved());
+        assertEquals("Insufficient funds.", declined.declineReason());
         server.verify();
+    }
+
+    @Test
+    void paymentClientRefundsByPaymentReference() {
+        RestClient.Builder builder = RestClient.builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        PaymentServiceClient client = new PaymentServiceClient(builder, "http://payment-service:8082", "payment-client", "s3cret");
+
+        server.expect(requestTo("http://payment-service:8082/api/payments/PAY-1/refund"))
+                .andExpect(method(HttpMethod.POST))
+                .andRespond(withSuccess("{\"transactionId\": \"PAY-1\", \"status\": \"REFUNDED\"}", MediaType.APPLICATION_JSON));
+
+        client.refund("PAY-1");
+        server.verify();
+    }
+
+    @Test
+    void cardDetailsAreNeverPrinted() {
+        assertFalse(CARD.toString().contains("4242424242424242"));
+        assertFalse(CARD.toString().contains("123"));
     }
 
     @Test

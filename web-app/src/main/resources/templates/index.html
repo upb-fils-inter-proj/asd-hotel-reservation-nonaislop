@@ -5,19 +5,17 @@
 <body>
 <header th:replace="~{fragments :: nav}"></header>
 <main>
-    <h1>Our rooms</h1>
+    <h1>Find a room</h1>
     <div th:replace="~{fragments :: messages}"></div>
-
-    <p sec:authorize="isAnonymous()" class="lead">
-        <a th:href="@{/register}">Register</a> or <a th:href="@{/login}">log in</a> to book a room.
-    </p>
-    <p sec:authorize="hasRole('GUEST')" class="lead">
-        <a th:href="@{/reservations/new}" class="button">Book a room</a>
+    <form th:replace="~{fragments :: search}"></form>
+    <p sec:authorize="isAnonymous()" class="muted">
+        Anyone can check availability. <a th:href="@{/register}">Register</a> or <a th:href="@{/login}">log in</a> to book.
     </p>
 
+    <h2>Our rooms</h2>
     <div class="cards">
         <article class="card" th:each="room : ${rooms}">
-            <h2 th:text="${room.roomType}">Deluxe</h2>
+            <h3 th:text="${room.roomType}">Deluxe</h3>
             <p class="muted">Room <span th:text="${room.roomNumber}">204</span></p>
             <p class="price"><span th:text="${room.currency}">EUR</span> <span th:text="${room.nightlyRate}">100.00</span>
                 <span class="muted">/ night</span></p>

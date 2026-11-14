@@ -3,13 +3,17 @@ package org.nightking.webapp.infrastructure;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import org.nightking.webapp.gateway.HotelApiException;
 import org.nightking.webapp.gateway.HotelManagementGateway;
 import org.nightking.webapp.model.Account;
+import org.nightking.webapp.model.Availability;
+import org.nightking.webapp.model.BookingQuote;
 import org.nightking.webapp.model.BookingRequest;
+import org.nightking.webapp.model.QuoteRequest;
 import org.nightking.webapp.model.Registration;
 import org.nightking.webapp.model.Reservation;
 import org.nightking.webapp.model.Room;
@@ -43,6 +47,27 @@ public class HotelManagementClient implements HotelManagementGateway {
     @Override
     public List<Room> rooms() {
         return rest.get().uri("/api/rooms").retrieve().body(new ParameterizedTypeReference<>() {});
+    }
+
+    @Override
+    public Availability availableRooms(LocalDate checkIn, LocalDate checkOut) {
+        return rest.get().uri(uri -> uri.path("/api/rooms/available")
+                        .queryParam("checkIn", checkIn).queryParam("checkOut", checkOut).build())
+                .retrieve().body(Availability.class);
+    }
+
+    @Override
+    public BookingQuote quote(QuoteRequest request) {
+        return rest.post().uri("/api/reservations/quote").contentType(MediaType.APPLICATION_JSON).body(request)
+                .retrieve().body(BookingQuote.class);
+    }
+
+    @Override
+    public Reservation cancel(String reservationId, String guestIdOrNull) {
+        Map<String, String> body = guestIdOrNull == null ? Map.of() : Map.of("guestId", guestIdOrNull);
+        return rest.post().uri("/api/reservations/{id}/cancel", reservationId)
+                .contentType(MediaType.APPLICATION_JSON).body(body)
+                .retrieve().body(Reservation.class);
     }
 
     @Override

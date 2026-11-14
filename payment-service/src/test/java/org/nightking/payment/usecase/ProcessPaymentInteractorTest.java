@@ -1,79 +1,120 @@
 package org.nightking.payment.usecase;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import java.util.ArrayList;
-import java.util.List;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.nightking.payment.entity.Payment;
-import org.nightking.payment.gateway.PaymentProcessor;
+import org.nightking.payment.gateway.PaymentRepository;
 import org.nightking.payment.infrastructure.PayFlowGateway;
 import org.nightking.payment.infrastructure.PayFlowGatewayAdapter;
+import org.nightking.payment.model.CardRequest;
 import org.nightking.payment.model.PaymentRequest;
 import org.nightking.payment.model.PaymentResponse;
 
+/** Charges and refunds through the simulated PayFlow card network, with an in-memory repository. */
 class ProcessPaymentInteractorTest {
-    private static final List<Payment> SAVED = new ArrayList<>();
+    private static final Clock NOVEMBER_2026 = Clock.fixed(Instant.parse("2026-11-14T10:00:00Z"), ZoneOffset.UTC);
 
-    static class RecordingPresenter implements ProcessPaymentPresenter {
-        PaymentResponse result;
-        String invalidReason;
-
-        @Override public void presentResult(PaymentResponse payment) { this.result = payment; }
-        @Override public void presentInvalidRequest(String reason) { this.invalidReason = reason; }
+    static class Payments implements PaymentRepository {
+        final Map<String, Payment> saved = new HashMap<>();
+        @Override public void save(Payment payment) { saved.put(payment.getTransactionId(), payment); }
+        @Override public Optional<Payment> findByTransactionId(String id) { return Optional.ofNullable(saved.get(id)); }
     }
 
-    private static RecordingPresenter pay(PaymentProcessor processor, String reservationId, double amount) {
+    static class RecordingPresenter implements ProcessPaymentPresenter, RefundPresenter {
+        PaymentResponse result;
+        String problem;
+
+        @Override public void presentResult(PaymentResponse payment) { result = payment; }
+        @Override public void presentInvalidRequest(String reason) { problem = reason; }
+        @Override public void presentRefunded(PaymentResponse payment) { result = payment; }
+        @Override public void presentNotFound(String message) { problem = message; }
+        @Override public void presentRejected(String message) { problem = message; }
+    }
+
+    private final Payments payments = new Payments();
+    private final PayFlowGatewayAdapter payFlow = new PayFlowGatewayAdapter(new PayFlowGateway());
+    private final ProcessPaymentUseCase charge = new ProcessPaymentInteractor(payFlow, payments, NOVEMBER_2026);
+    private final RefundPaymentUseCase refund = new RefundPaymentInteractor(payFlow, payments);
+
+    private RecordingPresenter pay(String cardNumber, int expiryMonth, int expiryYear, double amount) {
         RecordingPresenter presenter = new RecordingPresenter();
-        new ProcessPaymentInteractor(processor, SAVED::add).execute(new PaymentRequest(reservationId, amount), presenter);
+        charge.execute(new PaymentRequest("RES-1000", amount,
+                new CardRequest("Alex Morgan", cardNumber, expiryMonth, expiryYear, "123")), presenter);
         return presenter;
     }
 
-    private static PaymentProcessor payFlow() {
-        return new PayFlowGatewayAdapter(new PayFlowGateway());
+    private RecordingPresenter pay(String cardNumber) {
+        return pay(cardNumber, 12, 2028, 450.0);
     }
 
     @Test
-    void approvesPositiveAmount() {
-        PaymentResponse result = pay(payFlow(), "RES-1", 450.0).result;
-        assertTrue(result.approved());
-        assertEquals("RES-1", result.reservationId());
-        assertEquals(450.0, result.amount(), 1e-9);
+    void approvesTheSuccessTestCardAndKeepsOnlyTheLastFourDigits() {
+        PaymentResponse result = pay("4242 4242 4242 4242").result;
+
+        assertEquals("APPROVED", result.status());
+        assertTrue(result.transactionId().startsWith("PAY-"));
+        assertEquals("Visa", result.cardBrand());
+        assertEquals("4242", result.cardLastFour());
+        assertEquals("APPROVED", payments.saved.get(result.transactionId()).getStatus().name());
     }
 
     @Test
-    void declinesZeroAmount() {
-        assertFalse(pay(payFlow(), "RES-1", 0.0).result.approved());
+    void networkDeclinesCarryAReason() {
+        assertEquals("Your card was declined.", pay("4000 0000 0000 0002").result.declineReason());
+        assertEquals("Insufficient funds.", pay("4000 0000 0000 9995").result.declineReason());
+        assertEquals("The card has expired.", pay("4000 0000 0000 0069").result.declineReason());
+        assertEquals(3, payments.saved.values().stream().filter(p -> p.getStatus().name().equals("DECLINED")).count());
     }
 
     @Test
-    void passesReservationAndAmountToTheProvider() {
-        List<String> calls = new ArrayList<>();
-        assertTrue(pay((id, amount) -> calls.add(id + ":" + amount), "RES-7", 99.5).result.approved());
-        assertEquals(List.of("RES-7:99.5"), calls);
+    void invalidCardsAreDeclinedBeforeReachingTheNetwork() {
+        PaymentResponse badNumber = pay("4242 4242 4242 4241").result;
+        assertEquals("DECLINED", badNumber.status());
+        assertEquals("Card number is not valid.", badNumber.declineReason());
+        assertEquals("The card has expired.", pay("4242 4242 4242 4242", 10, 2026, 450.0).result.declineReason());
     }
 
     @Test
-    void providerRefusalIsReportedAsDeclined() {
-        assertFalse(pay((id, amount) -> false, "RES-7", 99.5).result.approved());
+    void missingFieldsAreInvalidRequests() {
+        RecordingPresenter noCard = new RecordingPresenter();
+        charge.execute(new PaymentRequest("RES-1000", 450.0, null), noCard);
+        assertNotNull(noCard.problem);
+        assertNull(noCard.result);
+        assertNotNull(pay("4242 4242 4242 4242", 12, 2028, 0).problem);
     }
 
     @Test
-    void everyAttemptIsRecorded() {
-        SAVED.clear();
-        pay(payFlow(), "RES-1", 450.0);
-        pay(payFlow(), "RES-2", 0.0);
-        assertEquals(List.of("APPROVED", "DECLINED"), SAVED.stream().map(p -> p.getStatus().name()).toList());
+    void approvedPaymentsCanBeRefundedOnce() {
+        String id = pay("4242 4242 4242 4242").result.transactionId();
+
+        RecordingPresenter first = new RecordingPresenter();
+        refund.execute(id, first);
+        assertEquals("REFUNDED", first.result.status());
+
+        RecordingPresenter second = new RecordingPresenter();
+        refund.execute(id, second);
+        assertNotNull(second.problem);
     }
 
     @Test
-    void missingReservationIdIsAnInvalidRequest() {
-        RecordingPresenter presenter = pay(payFlow(), " ", 10.0);
-        assertNull(presenter.result);
-        assertNotNull(presenter.invalidReason);
+    void declinedOrUnknownPaymentsCannotBeRefunded() {
+        String declined = pay("4000 0000 0000 0002").result.transactionId();
+        RecordingPresenter presenter = new RecordingPresenter();
+        refund.execute(declined, presenter);
+        assertNotNull(presenter.problem);
+
+        RecordingPresenter unknown = new RecordingPresenter();
+        refund.execute("PAY-NOPE", unknown);
+        assertEquals("Payment PAY-NOPE not found.", unknown.problem);
     }
 }

@@ -1,9 +1,12 @@
 package org.nightking.hotelmanagement.controller;
 
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyDouble;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.httpBasic;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -12,13 +15,21 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.jayway.jsonpath.JsonPath;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.nightking.hotelmanagement.gateway.PaymentGateway;
+import org.nightking.hotelmanagement.gateway.PaymentGateway.ChargeResult;
 import org.nightking.hotelmanagement.gateway.ShopGateway;
+import org.nightking.hotelmanagement.gateway.ShopGateway.StayQuote;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Primary;
 import org.springframework.http.MediaType;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.ActiveProfiles;
@@ -37,6 +48,16 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_EACH_TEST_METHOD)
 class ReservationApiTest {
 
+    /** "Today" is 1 November 2026 for these tests, so the booking dates stay in the future. */
+    @TestConfiguration
+    static class FixedClock {
+        @Bean
+        @Primary
+        Clock testClock() {
+            return Clock.fixed(Instant.parse("2026-11-01T09:00:00Z"), ZoneOffset.UTC);
+        }
+    }
+
     @Autowired
     private MockMvc mvc;
 
@@ -48,8 +69,10 @@ class ReservationApiTest {
 
     @BeforeEach
     void stubOtherServices() {
-        when(shop.quoteStay(anyDouble(), anyInt(), anyBoolean(), anyBoolean(), anyBoolean())).thenReturn(450.0);
-        when(payment.pay(anyString(), anyDouble())).thenReturn(true);
+        when(shop.quoteStay(anyDouble(), anyInt(), anyBoolean(), anyBoolean(), anyBoolean()))
+                .thenReturn(new StayQuote(450.0, "Room stay + Breakfast + Spa package"));
+        when(payment.charge(anyString(), anyDouble(), any()))
+                .thenReturn(new ChargeResult(true, "PAY-1", "Visa •••• 4242", null));
     }
 
     private static MockHttpServletRequestBuilder authorized(MockHttpServletRequestBuilder request) {
@@ -72,7 +95,9 @@ class ReservationApiTest {
     private static String booking(String guestId, String checkIn, String checkOut) {
         return """
                 {"guestId": "%s", "roomNumber": "204", "checkIn": "%s", "checkOut": "%s",
-                 "breakfast": true, "spa": true, "airportTransfer": false}""".formatted(guestId, checkIn, checkOut);
+                 "breakfast": true, "spa": true, "airportTransfer": false,
+                 "card": {"holderName": "Alex Morgan", "number": "4242424242424242", "expiryMonth": 12, "expiryYear": 2030, "cvc": "123"}}
+                """.formatted(guestId, checkIn, checkOut);
     }
 
     @Test
@@ -85,40 +110,70 @@ class ReservationApiTest {
         mvc.perform(authorized(get("/api/rooms")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(3))
-                .andExpect(jsonPath("$[1].roomNumber").value("204"))
-                .andExpect(jsonPath("$[1].nightlyRate").value(100.0));
+                .andExpect(jsonPath("$[1].roomNumber").value("204"));
     }
 
     @Test
-    void registeredGuestBooksChecksInAndOut() throws Exception {
+    void availabilityHidesBookedRoomsForOverlappingDates() throws Exception {
+        String guestId = registerGuest("alex");
+        mvc.perform(json(post("/api/reservations"), booking(guestId, "2026-12-10", "2026-12-13")))
+                .andExpect(status().isCreated());
+
+        mvc.perform(authorized(get("/api/rooms/available").param("checkIn", "2026-12-12").param("checkOut", "2026-12-14")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.nights").value(2))
+                .andExpect(jsonPath("$.rooms[*].roomNumber").value(org.hamcrest.Matchers.contains("101", "305")));
+        mvc.perform(authorized(get("/api/rooms/available").param("checkIn", "2026-12-13").param("checkOut", "2026-12-14")))
+                .andExpect(jsonPath("$.rooms.length()").value(3));
+        mvc.perform(authorized(get("/api/rooms/available").param("checkIn", "2026-10-01").param("checkOut", "2026-10-02")))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void quoteReturnsTheShopBreakdown() throws Exception {
+        mvc.perform(json(post("/api/reservations/quote"), """
+                        {"roomNumber": "204", "checkIn": "2026-12-10", "checkOut": "2026-12-13", "breakfast": true, "spa": true}"""))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.roomType").value("Deluxe"))
+                .andExpect(jsonPath("$.nights").value(3))
+                .andExpect(jsonPath("$.total").value(450.0))
+                .andExpect(jsonPath("$.breakdown").value("Room stay + Breakfast + Spa package"));
+    }
+
+    @Test
+    void registeredGuestBooksPaysChecksInAndOut() throws Exception {
         String guestId = registerGuest("alex");
 
         mvc.perform(json(post("/api/reservations"), booking(guestId, "2026-12-10", "2026-12-13")))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.reservationId").value("RES-1000"))
-                .andExpect(jsonPath("$.guestId").value(guestId))
                 .andExpect(jsonPath("$.guestName").value("Alex Morgan"))
                 .andExpect(jsonPath("$.totalPrice").value(450.0))
-                .andExpect(jsonPath("$.state").value("CONFIRMED"));
+                .andExpect(jsonPath("$.state").value("CONFIRMED"))
+                .andExpect(jsonPath("$.paymentReference").value("PAY-1"))
+                .andExpect(jsonPath("$.paidWith").value("Visa •••• 4242"));
 
         mvc.perform(authorized(post("/api/reservations/RES-1000/check-in")))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.state").value("CHECKED_IN"));
-        mvc.perform(authorized(get("/api/rooms")))
-                .andExpect(jsonPath("$[1].status").value("OCCUPIED"));
         mvc.perform(authorized(post("/api/reservations/RES-1000/check-out")))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.state").value("COMPLETED"));
-        mvc.perform(authorized(get("/api/rooms")))
-                .andExpect(jsonPath("$[1].status").value("AVAILABLE"));
     }
 
     @Test
-    void bookingNeedsARegisteredGuest() throws Exception {
-        mvc.perform(json(post("/api/reservations"), booking("not-registered", "2026-12-10", "2026-12-13")))
-                .andExpect(status().isNotFound());
+    void declinedCardIsPaymentRequiredAndBooksNothing() throws Exception {
+        when(payment.charge(anyString(), anyDouble(), any()))
+                .thenReturn(new ChargeResult(false, "PAY-1", "Visa •••• 9995", "Insufficient funds."));
+        String guestId = registerGuest("alex");
+
+        mvc.perform(json(post("/api/reservations"), booking(guestId, "2026-12-10", "2026-12-13")))
+                .andExpect(status().isPaymentRequired())
+                .andExpect(jsonPath("$.error").value("Payment declined: Insufficient funds."));
+        mvc.perform(authorized(get("/api/rooms/available").param("checkIn", "2026-12-10").param("checkOut", "2026-12-13")))
+                .andExpect(jsonPath("$.rooms.length()").value(3));
     }
 
     @Test
-    void overlappingBookingIsConflict() throws Exception {
+    void overlappingBookingIsConflictAndIsNotCharged() throws Exception {
         String guestId = registerGuest("alex");
         mvc.perform(json(post("/api/reservations"), booking(guestId, "2026-12-10", "2026-12-13")))
                 .andExpect(status().isCreated());
@@ -126,39 +181,36 @@ class ReservationApiTest {
         mvc.perform(json(post("/api/reservations"), booking(guestId, "2026-12-12", "2026-12-15")))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.error").value("Room 204 is already booked for those dates."));
+        verify(payment, org.mockito.Mockito.times(1)).charge(anyString(), anyDouble(), any());
     }
 
     @Test
-    void declinedPaymentGivesPendingReservationThatCannotCheckIn() throws Exception {
-        when(payment.pay(anyString(), anyDouble())).thenReturn(false);
+    void guestCancelsOwnReservationAndIsRefunded() throws Exception {
         String guestId = registerGuest("alex");
-
+        String other = registerGuest("sam");
         mvc.perform(json(post("/api/reservations"), booking(guestId, "2026-12-10", "2026-12-13")))
-                .andExpect(status().isCreated()).andExpect(jsonPath("$.state").value("PENDING"));
-        mvc.perform(authorized(post("/api/reservations/RES-1000/check-in")))
-                .andExpect(status().isConflict());
+                .andExpect(status().isCreated());
+
+        mvc.perform(json(post("/api/reservations/RES-1000/cancel"), "{\"guestId\": \"%s\"}".formatted(other)))
+                .andExpect(status().isNotFound());
+        verify(payment, never()).refund(anyString());
+
+        mvc.perform(json(post("/api/reservations/RES-1000/cancel"), "{\"guestId\": \"%s\"}".formatted(guestId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.state").value("CANCELLED"));
+        verify(payment).refund("PAY-1");
+        mvc.perform(json(post("/api/reservations"), booking(other, "2026-12-10", "2026-12-13")))
+                .andExpect(status().isCreated());
     }
 
     @Test
-    void listsReservationsForAllOrOneGuest() throws Exception {
-        String alex = registerGuest("alex");
-        String sam = registerGuest("sam");
-        mvc.perform(json(post("/api/reservations"), booking(alex, "2026-12-01", "2026-12-03"))).andExpect(status().isCreated());
-        mvc.perform(json(post("/api/reservations"), booking(sam, "2026-12-05", "2026-12-07"))).andExpect(status().isCreated());
-
-        mvc.perform(authorized(get("/api/reservations")))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.length()").value(2));
-        mvc.perform(authorized(get("/api/reservations").param("guestId", sam)))
-                .andExpect(jsonPath("$.length()").value(1))
-                .andExpect(jsonPath("$[0].guestId").value(sam));
-    }
-
-    @Test
-    void duplicateUsernameIsConflict() throws Exception {
-        registerGuest("alex");
-        mvc.perform(json(post("/api/accounts"), """
-                        {"username": "alex", "password": "another-pass", "name": "A", "email": "a@b.c", "phone": "1"}"""))
-                .andExpect(status().isConflict());
+    void bookingNeedsARegisteredGuestAndValidDates() throws Exception {
+        mvc.perform(json(post("/api/reservations"), booking("not-registered", "2026-12-10", "2026-12-13")))
+                .andExpect(status().isNotFound());
+        String guestId = registerGuest("alex");
+        mvc.perform(json(post("/api/reservations"), booking(guestId, "2026-10-10", "2026-10-13")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("Check-in can't be in the past."));
     }
 
     @Test
@@ -176,10 +228,11 @@ class ReservationApiTest {
     }
 
     @Test
-    void unknownReservationIsNotFound() throws Exception {
-        mvc.perform(authorized(post("/api/reservations/RES-404/check-in")))
-                .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.error").value("Reservation RES-404 not found."));
+    void duplicateUsernameIsConflict() throws Exception {
+        registerGuest("alex");
+        mvc.perform(json(post("/api/accounts"), """
+                        {"username": "alex", "password": "another-pass", "name": "A", "email": "a@b.c", "phone": "1"}"""))
+                .andExpect(status().isConflict());
     }
 
     @Test

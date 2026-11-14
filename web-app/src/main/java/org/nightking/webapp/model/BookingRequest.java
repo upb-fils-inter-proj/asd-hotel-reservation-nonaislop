@@ -8,5 +8,6 @@ public record BookingRequest(String guestId,
                              LocalDate checkOut,
                              boolean breakfast,
                              boolean spa,
-                             boolean airportTransfer) {
+                             boolean airportTransfer,
+                             CardDetails card) {
 }

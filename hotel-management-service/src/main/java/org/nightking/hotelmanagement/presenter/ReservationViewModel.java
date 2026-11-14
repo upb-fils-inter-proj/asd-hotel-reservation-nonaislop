@@ -14,7 +14,9 @@ public record ReservationViewModel(String reservationId,
                                    LocalDate checkOut,
                                    BigDecimal totalPrice,
                                    String currency,
-                                   String state) {
+                                   String state,
+                                   String paymentReference,
+                                   String paidWith) {
 
     static ReservationViewModel from(ReservationResponse reservation) {
         return new ReservationViewModel(
@@ -24,8 +26,14 @@ public record ReservationViewModel(String reservationId,
                 reservation.roomNumber(),
                 reservation.checkIn(),
                 reservation.checkOut(),
-                BigDecimal.valueOf(reservation.totalPrice()).setScale(2, RoundingMode.HALF_UP),
+                money(reservation.totalPrice()),
                 "EUR",
-                reservation.state());
+                reservation.state(),
+                reservation.paymentReference(),
+                reservation.paidWith());
+    }
+
+    static BigDecimal money(double amount) {
+        return BigDecimal.valueOf(amount).setScale(2, RoundingMode.HALF_UP);
     }
 }

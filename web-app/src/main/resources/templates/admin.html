@@ -27,6 +27,10 @@
                 <form th:if="${r.state == 'CONFIRMED'}" th:action="@{/admin/reservations/{id}/check-in(id=${r.reservationId})}" method="post">
                     <button type="submit" class="button small">Check in</button>
                 </form>
+                <form th:if="${r.state == 'CONFIRMED'}" th:action="@{/admin/reservations/{id}/cancel(id=${r.reservationId})}" method="post"
+                      onsubmit="return confirm('Cancel and refund this reservation?');">
+                    <button type="submit" class="button small danger">Cancel</button>
+                </form>
                 <form th:if="${r.state == 'CHECKED_IN'}" th:action="@{/admin/reservations/{id}/check-out(id=${r.reservationId})}" method="post">
                     <button type="submit" class="button small secondary">Check out</button>
                 </form>

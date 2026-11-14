@@ -1,5 +1,6 @@
 package org.nightking.hotelmanagement.config;
 
+import java.time.Clock;
 import org.nightking.hotelmanagement.gateway.AccountRepository;
 import org.nightking.hotelmanagement.gateway.PasswordHasher;
 import org.nightking.hotelmanagement.gateway.PaymentGateway;
@@ -22,6 +23,12 @@ import org.nightking.hotelmanagement.usecase.AuthenticateInteractor;
 import org.nightking.hotelmanagement.usecase.AuthenticateUseCase;
 import org.nightking.hotelmanagement.usecase.BookRoomInteractor;
 import org.nightking.hotelmanagement.usecase.BookRoomUseCase;
+import org.nightking.hotelmanagement.usecase.CancelReservationInteractor;
+import org.nightking.hotelmanagement.usecase.CancelReservationUseCase;
+import org.nightking.hotelmanagement.usecase.QuoteBookingInteractor;
+import org.nightking.hotelmanagement.usecase.QuoteBookingUseCase;
+import org.nightking.hotelmanagement.usecase.SearchAvailableRoomsInteractor;
+import org.nightking.hotelmanagement.usecase.SearchAvailableRoomsUseCase;
 import org.nightking.hotelmanagement.usecase.CheckInInteractor;
 import org.nightking.hotelmanagement.usecase.CheckInUseCase;
 import org.nightking.hotelmanagement.usecase.CheckOutInteractor;
@@ -41,6 +48,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.web.client.RestClient;
 
 /** Composition root of the hotel management service: plugs the database and HTTP adapters into the use cases. */
@@ -63,8 +71,14 @@ public class HotelManagementConfig {
     @Bean
     ReservationRepository reservationRepository(ReservationJpaRepository reservations,
                                                 RoomJpaRepository rooms,
-                                                AccountJpaRepository accounts) {
-        return new JpaReservationRepository(reservations, rooms, accounts);
+                                                AccountJpaRepository accounts,
+                                                PlatformTransactionManager transactionManager) {
+        return new JpaReservationRepository(reservations, rooms, accounts, transactionManager);
+    }
+
+    @Bean
+    Clock clock() {
+        return Clock.systemDefaultZone();
     }
 
     @Bean
@@ -105,8 +119,26 @@ public class HotelManagementConfig {
     @Bean
     BookRoomUseCase bookRoomUseCase(AccountRepository accounts, RoomRepository rooms,
                                     ReservationRepository reservations, ShopGateway shop,
-                                    PaymentGateway payment, ReservationEventPublisher publisher) {
-        return new BookRoomInteractor(accounts, rooms, reservations, shop, payment, publisher);
+                                    PaymentGateway payment, ReservationEventPublisher publisher, Clock clock) {
+        return new BookRoomInteractor(accounts, rooms, reservations, shop, payment, publisher, clock);
+    }
+
+    @Bean
+    SearchAvailableRoomsUseCase searchAvailableRoomsUseCase(RoomRepository rooms, ReservationRepository reservations,
+                                                            Clock clock) {
+        return new SearchAvailableRoomsInteractor(rooms, reservations, clock);
+    }
+
+    @Bean
+    QuoteBookingUseCase quoteBookingUseCase(RoomRepository rooms, ReservationRepository reservations,
+                                            ShopGateway shop, Clock clock) {
+        return new QuoteBookingInteractor(rooms, reservations, shop, clock);
+    }
+
+    @Bean
+    CancelReservationUseCase cancelReservationUseCase(ReservationRepository reservations, PaymentGateway payment,
+                                                      ReservationEventPublisher publisher) {
+        return new CancelReservationInteractor(reservations, payment, publisher);
     }
 
     @Bean

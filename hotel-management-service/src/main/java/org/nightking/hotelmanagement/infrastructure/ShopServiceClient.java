@@ -21,8 +21,7 @@ public class ShopServiceClient implements ShopGateway {
     }
 
     @Override
-    public double quoteStay(double nightlyRate, int nights,
-                            boolean breakfast, boolean spa, boolean airportTransfer) {
+    public StayQuote quoteStay(double nightlyRate, int nights, boolean breakfast, boolean spa, boolean airportTransfer) {
         QuoteResponse quote = restClient.post()
                 .uri("/api/shop/quotes")
                 .contentType(MediaType.APPLICATION_JSON)
@@ -32,12 +31,12 @@ public class ShopServiceClient implements ShopGateway {
         if (quote == null) {
             throw new IllegalStateException("Shop service returned an empty quote.");
         }
-        return quote.total();
+        return new StayQuote(quote.total(), quote.breakdown());
     }
 
     /** Wire format of the shop API, owned by this client so the services share no code. */
     record QuoteRequest(double nightlyRate, int nights, boolean breakfast, boolean spa, boolean airportTransfer) {}
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    record QuoteResponse(double total) {}
+    record QuoteResponse(double total, String breakdown) {}
 }

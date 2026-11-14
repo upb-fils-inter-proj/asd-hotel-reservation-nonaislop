@@ -40,6 +40,18 @@ public class AdminController {
         return "redirect:/admin";
     }
 
+    @PostMapping("/reservations/{id}/cancel")
+    public String cancel(@PathVariable String id, RedirectAttributes redirect) {
+        try {
+            Reservation reservation = hotel.cancel(id, null);
+            redirect.addFlashAttribute("message", "Reservation " + reservation.reservationId()
+                    + " cancelled and refunded.");
+        } catch (HotelApiException e) {
+            redirect.addFlashAttribute("error", e.getMessage());
+        }
+        return "redirect:/admin";
+    }
+
     @PostMapping("/reservations/{id}/check-out")
     public String checkOut(@PathVariable String id, RedirectAttributes redirect) {
         try {

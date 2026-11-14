@@ -34,6 +34,11 @@ public class ReservationWebPresenter implements ReservationPresenter {
         response = error(HttpStatus.BAD_REQUEST, message);
     }
 
+    @Override
+    public void presentPaymentDeclined(String reason) {
+        response = error(HttpStatus.PAYMENT_REQUIRED, "Payment declined: " + reason);
+    }
+
     public ResponseEntity<Object> response() {
         if (response == null) {
             throw new IllegalStateException("The use case did not present a result.");

@@ -14,7 +14,7 @@
         <a class="brand" th:href="@{/}">Hotel Reservations</a>
         <nav>
             <a th:href="@{/}">Rooms</a>
-            <a sec:authorize="hasRole('GUEST')" th:href="@{/reservations/new}">Book a room</a>
+            <a sec:authorize="hasRole('GUEST')" th:href="@{/#search}">Book a room</a>
             <a sec:authorize="hasRole('GUEST')" th:href="@{/reservations}">My reservations</a>
             <a sec:authorize="hasRole('ADMIN')" th:href="@{/admin}">Administration</a>
             <a sec:authorize="isAnonymous()" th:href="@{/login}">Log in</a>
@@ -26,6 +26,12 @@
         </nav>
     </div>
 </header>
+
+<form th:fragment="search" id="search" th:action="@{/rooms/available}" method="get" class="search">
+    <label>Check-in <input type="date" name="checkIn" th:value="${checkIn}" th:min="${today}" required></label>
+    <label>Check-out <input type="date" name="checkOut" th:value="${checkOut}" th:min="${today}" required></label>
+    <button type="submit" class="button">Check availability</button>
+</form>
 
 <div th:fragment="messages">
     <p class="notice" th:if="${message}" th:text="${message}">Saved.</p>

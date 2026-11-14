@@ -7,8 +7,9 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.nightking.hotelmanagement.entity.Reservation;
 import org.nightking.hotelmanagement.gateway.ReservationRepository;
+import org.nightking.hotelmanagement.gateway.RoomUnavailableException;
 
-/** In-memory ReservationRepository, used by the fast use-case tests. */
+/** In-memory ReservationRepository, used by the fast use-case tests. Enforces the same no-overlap rule. */
 public class InMemoryReservationRepository implements ReservationRepository {
     private final AtomicInteger sequence = new AtomicInteger(1000);
     private final Map<String, Reservation> reservations = new ConcurrentHashMap<>();
@@ -39,7 +40,15 @@ public class InMemoryReservationRepository implements ReservationRepository {
     }
 
     @Override
-    public void save(Reservation reservation) {
+    public synchronized void save(Reservation reservation) {
+        if (reservation.getState().holdsRoom()) {
+            boolean taken = findByRoomNumber(reservation.getRoom().getRoomNumber()).stream()
+                    .filter(other -> !other.getId().equals(reservation.getId()))
+                    .anyMatch(other -> other.blocks(reservation.getCheckInDate(), reservation.getCheckOutDate()));
+            if (taken) {
+                throw new RoomUnavailableException(reservation.getRoom().getRoomNumber());
+            }
+        }
         reservations.put(reservation.getId(), reservation);
     }
 }
