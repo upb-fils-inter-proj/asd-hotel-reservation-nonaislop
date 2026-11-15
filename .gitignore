@@ -40,3 +40,5 @@ build/
 
 ### Mac OS ###
 .DS_Store
+### Postman environment with real passwords (scripts/make-postman-env.sh) ###
+/postman/*.with-secrets.postman_environment.json

@@ -1,0 +1,2614 @@
+{
+  "info": {
+    "name": "Hotel Reservation Microservices",
+    "description": "Covers every feature of the hotel reservation system: accounts, availability, quotes, booking with simulated card payments, overlap protection, check-in/out, cancellation and refunds, the shop and payment services on their own, API security, and the web app's access rules.\n\nRun the folders in order (Collection Runner, or `newman`). Select the `Hotel reservation (local)` environment and fill in the passwords from `secrets/*.txt`, or generate a filled copy with `./scripts/make-postman-env.sh`. Every run picks new dates and usernames, so it can be repeated.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "0. Setup",
+      "description": "Picks fresh dates and usernames for this run, so the collection can be run again and again against the same databases without clashing with earlier runs.",
+      "item": [
+        {
+          "name": "Prepare run (dates, usernames)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{hotelUrl}}/api/rooms",
+              "host": [
+                "{{hotelUrl}}"
+              ],
+              "path": [
+                "api",
+                "rooms"
+              ]
+            },
+            "description": "Lists the rooms and prepares the variables used by every later request."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A random block of dates 60-700 days ahead, so repeated runs don't overlap.",
+                  "const day = 24 * 60 * 60 * 1000;",
+                  "const offset = 60 + Math.floor(Math.random() * 640);",
+                  "const iso = d => new Date(Date.now() + d * day).toISOString().slice(0, 10);",
+                  "pm.collectionVariables.set('stayIn', iso(offset));",
+                  "pm.collectionVariables.set('stayOut', iso(offset + 3));",
+                  "pm.collectionVariables.set('overlapIn', iso(offset + 1));",
+                  "pm.collectionVariables.set('overlapOut', iso(offset + 4));",
+                  "pm.collectionVariables.set('nextIn', iso(offset + 3));",
+                  "pm.collectionVariables.set('nextOut', iso(offset + 5));",
+                  "pm.collectionVariables.set('pastIn', iso(-10));",
+                  "pm.collectionVariables.set('pastOut', iso(-8));",
+                  "pm.collectionVariables.set('tooLongOut', iso(offset + 31));",
+                  "const run = Date.now().toString(36);",
+                  "pm.collectionVariables.set('runId', run);",
+                  "pm.collectionVariables.set('guestUsername', 'guest.' + run);",
+                  "pm.collectionVariables.set('otherUsername', 'other.' + run);",
+                  "pm.collectionVariables.set('guestName', 'Alex Morgan');"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Three seeded rooms\", () => pm.expect(pm.response.json().length).to.be.at.least(3));"
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "auth": {
+        "type": "basic",
+        "basic": [
+          {
+            "key": "username",
+            "value": "{{hotelApiUser}}",
+            "type": "string"
+          },
+          {
+            "key": "password",
+            "value": "{{hotelApiPassword}}",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "name": "1. Accounts (hotel management)",
+      "description": "Guest registration and sign-in checks used by the web app. Administrators are pre-created from the admin_password secret.",
+      "item": [
+        {
+          "name": "Register guest",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{hotelUrl}}/api/accounts",
+              "host": [
+                "{{hotelUrl}}"
+              ],
+              "path": [
+                "api",
+                "accounts"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{guestUsername}}\",\n  \"password\": \"correct-horse-battery\",\n  \"name\": \"{{guestName}}\",\n  \"email\": \"alex@example.com\",\n  \"phone\": \"+40123456789\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 201\", () => pm.response.to.have.status(201));",
+                  "pm.test(\".role is GUEST\", () => pm.expect(pm.response.json().role).to.eql(\"GUEST\"));",
+                  "pm.test(\"Password hash is never returned\", () => pm.expect(pm.response.json()).to.not.have.property(\"passwordHash\"));",
+                  "pm.collectionVariables.set(\"guestId\", pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Register a second guest",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{hotelUrl}}/api/accounts",
+              "host": [
+                "{{hotelUrl}}"
+              ],
+              "path": [
+                "api",
+                "accounts"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{otherUsername}}\",\n  \"password\": \"another-good-pass\",\n  \"name\": \"Sam Lee\",\n  \"email\": \"sam@example.com\",\n  \"phone\": \"+40987654321\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 201\", () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set(\"otherGuestId\", pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Register with a taken username → 409",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{hotelUrl}}/api/accounts",
+              "host": [
+                "{{hotelUrl}}"
+              ],
+              "path": [
+                "api",
+                "accounts"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{guestUsername}}\",\n  \"password\": \"correct-horse-battery\",\n  \"name\": \"Someone\",\n  \"email\": \"x@example.com\",\n  \"phone\": \"1\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 409\", () => pm.response.to.have.status(409));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Register with a short password → 400",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{hotelUrl}}/api/accounts",
+              "host": [
+                "{{hotelUrl}}"
+              ],
+              "path": [
+                "api",
+                "accounts"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"short.{{runId}}\",\n  \"password\": \"short\",\n  \"name\": \"Someone\",\n  \"email\": \"x@example.com\",\n  \"phone\": \"1\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\"Explains the rule\", () => pm.expect(pm.response.json().error).to.include(\"at least 8\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Authenticate guest",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{hotelUrl}}/api/accounts/authenticate",
+              "host": [
+                "{{hotelUrl}}"
+              ],
+              "path": [
+                "api",
+                "accounts",
+                "authenticate"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{guestUsername}}\",\n  \"password\": \"correct-horse-battery\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\".role is GUEST\", () => pm.expect(pm.response.json().role).to.eql(\"GUEST\"));",
+                  "pm.test(\"Same account id\", () => pm.expect(pm.response.json().id).to.eql(pm.collectionVariables.get(\"guestId\")));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Authenticate with a wrong password → 401",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{hotelUrl}}/api/accounts/authenticate",
+              "host": [
+                "{{hotelUrl}}"
+              ],
+              "path": [
+                "api",
+                "accounts",
+                "authenticate"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{guestUsername}}\",\n  \"password\": \"wrong-password\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 401\", () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Authenticate the pre-created admin",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{hotelUrl}}/api/accounts/authenticate",
+              "host": [
+                "{{hotelUrl}}"
+              ],
+              "path": [
+                "api",
+                "accounts",
+                "authenticate"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"admin\",\n  \"password\": \"{{adminPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Needs adminPassword in the environment (secrets/admin_password.txt)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\".role is ADMIN\", () => pm.expect(pm.response.json().role).to.eql(\"ADMIN\"));"
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "auth": {
+        "type": "basic",
+        "basic": [
+          {
+            "key": "username",
+            "value": "{{hotelApiUser}}",
+            "type": "string"
+          },
+          {
+            "key": "password",
+            "value": "{{hotelApiPassword}}",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "name": "2. Rooms and availability (hotel management)",
+      "description": "Date-based availability search.",
+      "item": [
+        {
+          "name": "List rooms",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{hotelUrl}}/api/rooms",
+              "host": [
+                "{{hotelUrl}}"
+              ],
+              "path": [
+                "api",
+                "rooms"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Each room has a rate and status\", () => pm.response.json().forEach(r => { pm.expect(r.nightlyRate).to.be.above(0); pm.expect(r.status).to.be.a(\"string\"); }));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Available rooms for the stay",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{hotelUrl}}/api/rooms/available?checkIn={{stayIn}}&checkOut={{stayOut}}",
+              "host": [
+                "{{hotelUrl}}"
+              ],
+              "path": [
+                "api",
+                "rooms",
+                "available"
+              ],
+              "query": [
+                {
+                  "key": "checkIn",
+                  "value": "{{stayIn}}"
+                },
+                {
+                  "key": "checkOut",
+                  "value": "{{stayOut}}"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\".nights is 3\", () => pm.expect(pm.response.json().nights).to.eql(3));",
+                  "pm.test(\"Rooms 101, 204 and 305 are free\", () => pm.expect(pm.response.json().rooms.map(r => r.roomNumber)).to.include.members([\"101\", \"204\", \"305\"]));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Availability in the past → 400",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{hotelUrl}}/api/rooms/available?checkIn={{pastIn}}&checkOut={{pastOut}}",
+              "host": [
+                "{{hotelUrl}}"
+              ],
+              "path": [
+                "api",
+                "rooms",
+                "available"
+              ],
+              "query": [
+                {
+                  "key": "checkIn",
+                  "value": "{{pastIn}}"
+                },
+                {
+                  "key": "checkOut",
+                  "value": "{{pastOut}}"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\".error is Check-in can't be in the past.\", () => pm.expect(pm.response.json().error).to.eql(\"Check-in can't be in the past.\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Stay longer than 30 nights → 400",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{hotelUrl}}/api/rooms/available?checkIn={{stayIn}}&checkOut={{tooLongOut}}",
+              "host": [
+                "{{hotelUrl}}"
+              ],
+              "path": [
+                "api",
+                "rooms",
+                "available"
+              ],
+              "query": [
+                {
+                  "key": "checkIn",
+                  "value": "{{stayIn}}"
+                },
+                {
+                  "key": "checkOut",
+                  "value": "{{tooLongOut}}"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\".error is Stays are limited to 30 nights.\", () => pm.expect(pm.response.json().error).to.eql(\"Stays are limited to 30 nights.\"));"
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "auth": {
+        "type": "basic",
+        "basic": [
+          {
+            "key": "username",
+            "value": "{{hotelApiUser}}",
+            "type": "string"
+          },
+          {
+            "key": "password",
+            "value": "{{hotelApiPassword}}",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "name": "3. Booking and payment (hotel management → shop → payment)",
+      "description": "Quote, book with a card, overlap protection, check-in and check-out.",
+      "item": [
+        {
+          "name": "Quote room 204 with breakfast and spa",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{hotelUrl}}/api/reservations/quote",
+              "host": [
+                "{{hotelUrl}}"
+              ],
+              "path": [
+                "api",
+                "reservations",
+                "quote"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"roomNumber\": \"204\",\n  \"checkIn\": \"{{stayIn}}\",\n  \"checkOut\": \"{{stayOut}}\",\n  \"breakfast\": true,\n  \"spa\": true,\n  \"airportTransfer\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Room 100/night × 3 × 1.2 seasonal = 360, breakfast 15 × 3 = 45, spa 45."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\".total is 450\", () => pm.expect(pm.response.json().total).to.eql(450));",
+                  "pm.test(\".breakdown is Room stay + Breakfast + Spa package\", () => pm.expect(pm.response.json().breakdown).to.eql(\"Room stay + Breakfast + Spa package\"));",
+                  "pm.test(\".roomType is Deluxe\", () => pm.expect(pm.response.json().roomType).to.eql(\"Deluxe\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Book room 204 with an approved card",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{hotelUrl}}/api/reservations",
+              "host": [
+                "{{hotelUrl}}"
+              ],
+              "path": [
+                "api",
+                "reservations"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"guestId\": \"{{guestId}}\",\n  \"roomNumber\": \"204\",\n  \"checkIn\": \"{{stayIn}}\",\n  \"checkOut\": \"{{stayOut}}\",\n  \"breakfast\": true,\n  \"spa\": true,\n  \"airportTransfer\": false,\n  \"card\": {\n    \"holderName\": \"{{guestName}}\",\n    \"number\": \"4242 4242 4242 4242\",\n    \"expiryMonth\": 12,\n    \"expiryYear\": 2030,\n    \"cvc\": \"123\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 201\", () => pm.response.to.have.status(201));",
+                  "pm.test(\".state is CONFIRMED\", () => pm.expect(pm.response.json().state).to.eql(\"CONFIRMED\"));",
+                  "pm.test(\".totalPrice is 450\", () => pm.expect(pm.response.json().totalPrice).to.eql(450));",
+                  "pm.test(\".paidWith is Visa •••• 4242\", () => pm.expect(pm.response.json().paidWith).to.eql(\"Visa \\u2022\\u2022\\u2022\\u2022 4242\"));",
+                  "pm.test(\"Has a payment reference\", () => pm.expect(pm.response.json().paymentReference).to.match(/^PAY-/));",
+                  "pm.collectionVariables.set(\"reservationId\", pm.response.json().reservationId);",
+                  "pm.collectionVariables.set(\"paymentReference\", pm.response.json().paymentReference);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Book overlapping dates → 409 (not charged)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{hotelUrl}}/api/reservations",
+              "host": [
+                "{{hotelUrl}}"
+              ],
+              "path": [
+                "api",
+                "reservations"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"guestId\": \"{{otherGuestId}}\",\n  \"roomNumber\": \"204\",\n  \"checkIn\": \"{{overlapIn}}\",\n  \"checkOut\": \"{{overlapOut}}\",\n  \"breakfast\": true,\n  \"spa\": true,\n  \"airportTransfer\": false,\n  \"card\": {\n    \"holderName\": \"{{guestName}}\",\n    \"number\": \"4242 4242 4242 4242\",\n    \"expiryMonth\": 12,\n    \"expiryYear\": 2030,\n    \"cvc\": \"123\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 409\", () => pm.response.to.have.status(409));",
+                  "pm.test(\".error is Room 204 is already booked for those dates.\", () => pm.expect(pm.response.json().error).to.eql(\"Room 204 is already booked for those dates.\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Availability now hides room 204",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{hotelUrl}}/api/rooms/available?checkIn={{overlapIn}}&checkOut={{overlapOut}}",
+              "host": [
+                "{{hotelUrl}}"
+              ],
+              "path": [
+                "api",
+                "rooms",
+                "available"
+              ],
+              "query": [
+                {
+                  "key": "checkIn",
+                  "value": "{{overlapIn}}"
+                },
+                {
+                  "key": "checkOut",
+                  "value": "{{overlapOut}}"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"204 is not listed\", () => pm.expect(pm.response.json().rooms.map(r => r.roomNumber)).to.not.include(\"204\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Back-to-back stay in room 204 is allowed",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{hotelUrl}}/api/reservations/quote",
+              "host": [
+                "{{hotelUrl}}"
+              ],
+              "path": [
+                "api",
+                "reservations",
+                "quote"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"roomNumber\": \"204\",\n  \"checkIn\": \"{{nextIn}}\",\n  \"checkOut\": \"{{nextOut}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Check-in on the day the previous guest checks out."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\".nights is 2\", () => pm.expect(pm.response.json().nights).to.eql(2));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Book with a declined card → 402",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{hotelUrl}}/api/reservations",
+              "host": [
+                "{{hotelUrl}}"
+              ],
+              "path": [
+                "api",
+                "reservations"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"guestId\": \"{{guestId}}\",\n  \"roomNumber\": \"305\",\n  \"checkIn\": \"{{stayIn}}\",\n  \"checkOut\": \"{{stayOut}}\",\n  \"breakfast\": true,\n  \"spa\": true,\n  \"airportTransfer\": false,\n  \"card\": {\n    \"holderName\": \"{{guestName}}\",\n    \"number\": \"4000 0000 0000 9995\",\n    \"expiryMonth\": 12,\n    \"expiryYear\": 2030,\n    \"cvc\": \"123\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 402\", () => pm.response.to.have.status(402));",
+                  "pm.test(\".error is Payment declined: Insufficient funds.\", () => pm.expect(pm.response.json().error).to.eql(\"Payment declined: Insufficient funds.\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Declined booking left room 305 free",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{hotelUrl}}/api/rooms/available?checkIn={{stayIn}}&checkOut={{stayOut}}",
+              "host": [
+                "{{hotelUrl}}"
+              ],
+              "path": [
+                "api",
+                "rooms",
+                "available"
+              ],
+              "query": [
+                {
+                  "key": "checkIn",
+                  "value": "{{stayIn}}"
+                },
+                {
+                  "key": "checkOut",
+                  "value": "{{stayOut}}"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"305 is still listed\", () => pm.expect(pm.response.json().rooms.map(r => r.roomNumber)).to.include(\"305\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Book for an unregistered guest → 404",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{hotelUrl}}/api/reservations",
+              "host": [
+                "{{hotelUrl}}"
+              ],
+              "path": [
+                "api",
+                "reservations"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"guestId\": \"not-a-guest\",\n  \"roomNumber\": \"101\",\n  \"checkIn\": \"{{stayIn}}\",\n  \"checkOut\": \"{{stayOut}}\",\n  \"breakfast\": true,\n  \"spa\": true,\n  \"airportTransfer\": false,\n  \"card\": {\n    \"holderName\": \"{{guestName}}\",\n    \"number\": \"4242 4242 4242 4242\",\n    \"expiryMonth\": 12,\n    \"expiryYear\": 2030,\n    \"cvc\": \"123\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 404\", () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Book in the past → 400",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{hotelUrl}}/api/reservations",
+              "host": [
+                "{{hotelUrl}}"
+              ],
+              "path": [
+                "api",
+                "reservations"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"guestId\": \"{{guestId}}\",\n  \"roomNumber\": \"101\",\n  \"checkIn\": \"{{pastIn}}\",\n  \"checkOut\": \"{{pastOut}}\",\n  \"breakfast\": true,\n  \"spa\": true,\n  \"airportTransfer\": false,\n  \"card\": {\n    \"holderName\": \"{{guestName}}\",\n    \"number\": \"4242 4242 4242 4242\",\n    \"expiryMonth\": 12,\n    \"expiryYear\": 2030,\n    \"cvc\": \"123\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 400\", () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Guest's reservations",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{hotelUrl}}/api/reservations?guestId={{guestId}}",
+              "host": [
+                "{{hotelUrl}}"
+              ],
+              "path": [
+                "api",
+                "reservations"
+              ],
+              "query": [
+                {
+                  "key": "guestId",
+                  "value": "{{guestId}}"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Contains the new reservation\", () => pm.expect(pm.response.json().map(r => r.reservationId)).to.include(pm.collectionVariables.get(\"reservationId\")));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "All reservations (administration)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{hotelUrl}}/api/reservations",
+              "host": [
+                "{{hotelUrl}}"
+              ],
+              "path": [
+                "api",
+                "reservations"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"At least one reservation\", () => pm.expect(pm.response.json().length).to.be.at.least(1));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Check in",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{hotelUrl}}/api/reservations/{{reservationId}}/check-in",
+              "host": [
+                "{{hotelUrl}}"
+              ],
+              "path": [
+                "api",
+                "reservations",
+                "{{reservationId}}",
+                "check-in"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\".state is CHECKED_IN\", () => pm.expect(pm.response.json().state).to.eql(\"CHECKED_IN\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Check in twice → 409",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{hotelUrl}}/api/reservations/{{reservationId}}/check-in",
+              "host": [
+                "{{hotelUrl}}"
+              ],
+              "path": [
+                "api",
+                "reservations",
+                "{{reservationId}}",
+                "check-in"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 409\", () => pm.response.to.have.status(409));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cancel after check-in → 409",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{hotelUrl}}/api/reservations/{{reservationId}}/cancel",
+              "host": [
+                "{{hotelUrl}}"
+              ],
+              "path": [
+                "api",
+                "reservations",
+                "{{reservationId}}",
+                "cancel"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 409\", () => pm.response.to.have.status(409));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Check out",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{hotelUrl}}/api/reservations/{{reservationId}}/check-out",
+              "host": [
+                "{{hotelUrl}}"
+              ],
+              "path": [
+                "api",
+                "reservations",
+                "{{reservationId}}",
+                "check-out"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\".state is COMPLETED\", () => pm.expect(pm.response.json().state).to.eql(\"COMPLETED\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Check in an unknown reservation → 404",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{hotelUrl}}/api/reservations/RES-0/check-in",
+              "host": [
+                "{{hotelUrl}}"
+              ],
+              "path": [
+                "api",
+                "reservations",
+                "RES-0",
+                "check-in"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 404\", () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "auth": {
+        "type": "basic",
+        "basic": [
+          {
+            "key": "username",
+            "value": "{{hotelApiUser}}",
+            "type": "string"
+          },
+          {
+            "key": "password",
+            "value": "{{hotelApiPassword}}",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "name": "4. Cancellation and refunds",
+      "description": "Guests cancel their own reservations; administrators cancel any. Cancelling refunds the payment and frees the dates.",
+      "item": [
+        {
+          "name": "Book room 101",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{hotelUrl}}/api/reservations",
+              "host": [
+                "{{hotelUrl}}"
+              ],
+              "path": [
+                "api",
+                "reservations"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"guestId\": \"{{guestId}}\",\n  \"roomNumber\": \"101\",\n  \"checkIn\": \"{{stayIn}}\",\n  \"checkOut\": \"{{stayOut}}\",\n  \"breakfast\": false,\n  \"spa\": false,\n  \"airportTransfer\": false,\n  \"card\": {\n    \"holderName\": \"{{guestName}}\",\n    \"number\": \"4242 4242 4242 4242\",\n    \"expiryMonth\": 12,\n    \"expiryYear\": 2030,\n    \"cvc\": \"123\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 201\", () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set(\"cancelReservationId\", pm.response.json().reservationId);",
+                  "pm.collectionVariables.set(\"cancelPaymentReference\", pm.response.json().paymentReference);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Another guest cannot cancel it → 404",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{hotelUrl}}/api/reservations/{{cancelReservationId}}/cancel",
+              "host": [
+                "{{hotelUrl}}"
+              ],
+              "path": [
+                "api",
+                "reservations",
+                "{{cancelReservationId}}",
+                "cancel"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"guestId\": \"{{otherGuestId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 404\", () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Guest cancels own reservation",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{hotelUrl}}/api/reservations/{{cancelReservationId}}/cancel",
+              "host": [
+                "{{hotelUrl}}"
+              ],
+              "path": [
+                "api",
+                "reservations",
+                "{{cancelReservationId}}",
+                "cancel"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"guestId\": \"{{guestId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\".state is CANCELLED\", () => pm.expect(pm.response.json().state).to.eql(\"CANCELLED\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Payment was refunded (refunding again → 409)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{paymentUrl}}/api/payments/{{cancelPaymentReference}}/refund",
+              "host": [
+                "{{paymentUrl}}"
+              ],
+              "path": [
+                "api",
+                "payments",
+                "{{cancelPaymentReference}}",
+                "refund"
+              ]
+            },
+            "auth": {
+              "type": "basic",
+              "basic": [
+                {
+                  "key": "username",
+                  "value": "{{paymentApiUser}}",
+                  "type": "string"
+                },
+                {
+                  "key": "password",
+                  "value": "{{paymentApiPassword}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 409\", () => pm.response.to.have.status(409));",
+                  "pm.test(\"Already refunded\", () => pm.expect(pm.response.json().error).to.include(\"REFUNDED\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Room 101 is free again",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{hotelUrl}}/api/rooms/available?checkIn={{stayIn}}&checkOut={{stayOut}}",
+              "host": [
+                "{{hotelUrl}}"
+              ],
+              "path": [
+                "api",
+                "rooms",
+                "available"
+              ],
+              "query": [
+                {
+                  "key": "checkIn",
+                  "value": "{{stayIn}}"
+                },
+                {
+                  "key": "checkOut",
+                  "value": "{{stayOut}}"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"101 is listed\", () => pm.expect(pm.response.json().rooms.map(r => r.roomNumber)).to.include(\"101\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Book room 305 (to be cancelled by an admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{hotelUrl}}/api/reservations",
+              "host": [
+                "{{hotelUrl}}"
+              ],
+              "path": [
+                "api",
+                "reservations"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"guestId\": \"{{otherGuestId}}\",\n  \"roomNumber\": \"305\",\n  \"checkIn\": \"{{stayIn}}\",\n  \"checkOut\": \"{{stayOut}}\",\n  \"breakfast\": false,\n  \"spa\": false,\n  \"airportTransfer\": false,\n  \"card\": {\n    \"holderName\": \"{{guestName}}\",\n    \"number\": \"4242 4242 4242 4242\",\n    \"expiryMonth\": 12,\n    \"expiryYear\": 2030,\n    \"cvc\": \"123\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 201\", () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set(\"adminCancelId\", pm.response.json().reservationId);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Administrator cancels it (no guestId)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{hotelUrl}}/api/reservations/{{adminCancelId}}/cancel",
+              "host": [
+                "{{hotelUrl}}"
+              ],
+              "path": [
+                "api",
+                "reservations",
+                "{{adminCancelId}}",
+                "cancel"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\".state is CANCELLED\", () => pm.expect(pm.response.json().state).to.eql(\"CANCELLED\"));"
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "auth": {
+        "type": "basic",
+        "basic": [
+          {
+            "key": "username",
+            "value": "{{hotelApiUser}}",
+            "type": "string"
+          },
+          {
+            "key": "password",
+            "value": "{{hotelApiPassword}}",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "name": "5. Shop service",
+      "description": "Pricing strategy (seasonal × 1.2) and the extras price list from the shop database.",
+      "item": [
+        {
+          "name": "Quote 3 nights with breakfast and spa",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{shopUrl}}/api/shop/quotes",
+              "host": [
+                "{{shopUrl}}"
+              ],
+              "path": [
+                "api",
+                "shop",
+                "quotes"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nightlyRate\": 100.0,\n  \"nights\": 3,\n  \"breakfast\": true,\n  \"spa\": true,\n  \"airportTransfer\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\".total is 450\", () => pm.expect(pm.response.json().total).to.eql(450));",
+                  "pm.test(\".currency is EUR\", () => pm.expect(pm.response.json().currency).to.eql(\"EUR\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Quote with airport transfer",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{shopUrl}}/api/shop/quotes",
+              "host": [
+                "{{shopUrl}}"
+              ],
+              "path": [
+                "api",
+                "shop",
+                "quotes"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nightlyRate\": 80.0,\n  \"nights\": 2,\n  \"breakfast\": false,\n  \"spa\": false,\n  \"airportTransfer\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "80 × 2 × 1.2 = 192, plus 30 for the transfer."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\".total is 222\", () => pm.expect(pm.response.json().total).to.eql(222));",
+                  "pm.test(\".breakdown is Room stay + Airport transfer\", () => pm.expect(pm.response.json().breakdown).to.eql(\"Room stay + Airport transfer\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Quote zero nights → 400",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{shopUrl}}/api/shop/quotes",
+              "host": [
+                "{{shopUrl}}"
+              ],
+              "path": [
+                "api",
+                "shop",
+                "quotes"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nightlyRate\": 100.0,\n  \"nights\": 0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 400\", () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "auth": {
+        "type": "basic",
+        "basic": [
+          {
+            "key": "username",
+            "value": "{{shopApiUser}}",
+            "type": "string"
+          },
+          {
+            "key": "password",
+            "value": "{{shopApiPassword}}",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "name": "6. Payment service (simulated card network)",
+      "description": "Test cards decide the outcome. Only the card brand and last four digits are stored.",
+      "item": [
+        {
+          "name": "Charge with the approved test card",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{paymentUrl}}/api/payments",
+              "host": [
+                "{{paymentUrl}}"
+              ],
+              "path": [
+                "api",
+                "payments"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reservationId\": \"PM-{{runId}}\",\n  \"amount\": 120.0,\n  \"card\": {\n    \"holderName\": \"Alex Morgan\",\n    \"number\": \"4242 4242 4242 4242\",\n    \"expiryMonth\": 12,\n    \"expiryYear\": 2030,\n    \"cvc\": \"123\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\".status is APPROVED\", () => pm.expect(pm.response.json().status).to.eql(\"APPROVED\"));",
+                  "pm.collectionVariables.set(\"transactionId\", pm.response.json().transactionId);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Card is masked in the response",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{paymentUrl}}/api/payments",
+              "host": [
+                "{{paymentUrl}}"
+              ],
+              "path": [
+                "api",
+                "payments"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reservationId\": \"PM-{{runId}}-mask\",\n  \"amount\": 10.0,\n  \"card\": {\n    \"holderName\": \"Alex Morgan\",\n    \"number\": \"4242 4242 4242 4242\",\n    \"expiryMonth\": 12,\n    \"expiryYear\": 2030,\n    \"cvc\": \"123\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\".card is Visa •••• 4242\", () => pm.expect(pm.response.json().card).to.eql(\"Visa \\u2022\\u2022\\u2022\\u2022 4242\"));",
+                  "pm.test(\"Full number is not echoed\", () => pm.expect(pm.response.text()).to.not.include(\"4242424242424242\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Declined card",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{paymentUrl}}/api/payments",
+              "host": [
+                "{{paymentUrl}}"
+              ],
+              "path": [
+                "api",
+                "payments"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reservationId\": \"PM-{{runId}}\",\n  \"amount\": 120.0,\n  \"card\": {\n    \"holderName\": \"Alex Morgan\",\n    \"number\": \"4000 0000 0000 0002\",\n    \"expiryMonth\": 12,\n    \"expiryYear\": 2030,\n    \"cvc\": \"123\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\".status is DECLINED\", () => pm.expect(pm.response.json().status).to.eql(\"DECLINED\"));",
+                  "pm.test(\".declineReason is Your card was declined.\", () => pm.expect(pm.response.json().declineReason).to.eql(\"Your card was declined.\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Insufficient funds",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{paymentUrl}}/api/payments",
+              "host": [
+                "{{paymentUrl}}"
+              ],
+              "path": [
+                "api",
+                "payments"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reservationId\": \"PM-{{runId}}\",\n  \"amount\": 120.0,\n  \"card\": {\n    \"holderName\": \"Alex Morgan\",\n    \"number\": \"4000 0000 0000 9995\",\n    \"expiryMonth\": 12,\n    \"expiryYear\": 2030,\n    \"cvc\": \"123\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\".status is DECLINED\", () => pm.expect(pm.response.json().status).to.eql(\"DECLINED\"));",
+                  "pm.test(\".declineReason is Insufficient funds.\", () => pm.expect(pm.response.json().declineReason).to.eql(\"Insufficient funds.\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Expired card (network)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{paymentUrl}}/api/payments",
+              "host": [
+                "{{paymentUrl}}"
+              ],
+              "path": [
+                "api",
+                "payments"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reservationId\": \"PM-{{runId}}\",\n  \"amount\": 120.0,\n  \"card\": {\n    \"holderName\": \"Alex Morgan\",\n    \"number\": \"4000 0000 0000 0069\",\n    \"expiryMonth\": 12,\n    \"expiryYear\": 2030,\n    \"cvc\": \"123\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\".status is DECLINED\", () => pm.expect(pm.response.json().status).to.eql(\"DECLINED\"));",
+                  "pm.test(\".declineReason is The card has expired.\", () => pm.expect(pm.response.json().declineReason).to.eql(\"The card has expired.\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Invalid card number (Luhn check)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{paymentUrl}}/api/payments",
+              "host": [
+                "{{paymentUrl}}"
+              ],
+              "path": [
+                "api",
+                "payments"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reservationId\": \"PM-{{runId}}\",\n  \"amount\": 120.0,\n  \"card\": {\n    \"holderName\": \"Alex Morgan\",\n    \"number\": \"4242 4242 4242 4241\",\n    \"expiryMonth\": 12,\n    \"expiryYear\": 2030,\n    \"cvc\": \"123\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\".status is DECLINED\", () => pm.expect(pm.response.json().status).to.eql(\"DECLINED\"));",
+                  "pm.test(\".declineReason is Card number is not valid.\", () => pm.expect(pm.response.json().declineReason).to.eql(\"Card number is not valid.\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Expiry date in the past",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{paymentUrl}}/api/payments",
+              "host": [
+                "{{paymentUrl}}"
+              ],
+              "path": [
+                "api",
+                "payments"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reservationId\": \"PM-{{runId}}\",\n  \"amount\": 120.0,\n  \"card\": {\n    \"holderName\": \"Alex Morgan\",\n    \"number\": \"4242 4242 4242 4242\",\n    \"expiryMonth\": 12,\n    \"expiryYear\": 2020,\n    \"cvc\": \"123\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\".status is DECLINED\", () => pm.expect(pm.response.json().status).to.eql(\"DECLINED\"));",
+                  "pm.test(\".declineReason is The card has expired.\", () => pm.expect(pm.response.json().declineReason).to.eql(\"The card has expired.\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Missing card → 400",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{paymentUrl}}/api/payments",
+              "host": [
+                "{{paymentUrl}}"
+              ],
+              "path": [
+                "api",
+                "payments"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reservationId\": \"PM-{{runId}}\",\n  \"amount\": 10.0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 400\", () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Refund the approved payment",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{paymentUrl}}/api/payments/{{transactionId}}/refund",
+              "host": [
+                "{{paymentUrl}}"
+              ],
+              "path": [
+                "api",
+                "payments",
+                "{{transactionId}}",
+                "refund"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\".status is REFUNDED\", () => pm.expect(pm.response.json().status).to.eql(\"REFUNDED\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Refund twice → 409",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{paymentUrl}}/api/payments/{{transactionId}}/refund",
+              "host": [
+                "{{paymentUrl}}"
+              ],
+              "path": [
+                "api",
+                "payments",
+                "{{transactionId}}",
+                "refund"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 409\", () => pm.response.to.have.status(409));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Refund an unknown payment → 404",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{paymentUrl}}/api/payments/PAY-UNKNOWN/refund",
+              "host": [
+                "{{paymentUrl}}"
+              ],
+              "path": [
+                "api",
+                "payments",
+                "PAY-UNKNOWN",
+                "refund"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 404\", () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "auth": {
+        "type": "basic",
+        "basic": [
+          {
+            "key": "username",
+            "value": "{{paymentApiUser}}",
+            "type": "string"
+          },
+          {
+            "key": "password",
+            "value": "{{paymentApiPassword}}",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "name": "7. Security",
+      "description": "Every API needs its own credentials; services don't accept each other's.",
+      "item": [
+        {
+          "name": "Hotel API without credentials → 401",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{hotelUrl}}/api/rooms",
+              "host": [
+                "{{hotelUrl}}"
+              ],
+              "path": [
+                "api",
+                "rooms"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 401\", () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Hotel API with a wrong password → 401",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{hotelUrl}}/api/rooms",
+              "host": [
+                "{{hotelUrl}}"
+              ],
+              "path": [
+                "api",
+                "rooms"
+              ]
+            },
+            "auth": {
+              "type": "basic",
+              "basic": [
+                {
+                  "key": "username",
+                  "value": "{{hotelApiUser}}",
+                  "type": "string"
+                },
+                {
+                  "key": "password",
+                  "value": "wrong",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 401\", () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Shop API with the payment credentials → 401",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{shopUrl}}/api/shop/quotes",
+              "host": [
+                "{{shopUrl}}"
+              ],
+              "path": [
+                "api",
+                "shop",
+                "quotes"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nightlyRate\": 100.0,\n  \"nights\": 1\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "basic",
+              "basic": [
+                {
+                  "key": "username",
+                  "value": "{{paymentApiUser}}",
+                  "type": "string"
+                },
+                {
+                  "key": "password",
+                  "value": "{{paymentApiPassword}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 401\", () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Payment API without credentials → 401",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{paymentUrl}}/api/payments",
+              "host": [
+                "{{paymentUrl}}"
+              ],
+              "path": [
+                "api",
+                "payments"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reservationId\": \"X\",\n  \"amount\": 1.0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 401\", () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "8. Web app (pages and access rules)",
+      "description": "The browser interface. Booking and administration pages need a signed-in user; use a browser at {{webUrl}} for the full click-through (forms carry CSRF tokens).",
+      "item": [
+        {
+          "name": "Home page with the search",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{webUrl}}/",
+              "host": [
+                "{{webUrl}}"
+              ],
+              "path": []
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Has the availability search\", () => pm.expect(pm.response.text()).to.include(\"Check availability\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Availability page (public)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{webUrl}}/rooms/available?checkIn={{stayIn}}&checkOut={{stayOut}}",
+              "host": [
+                "{{webUrl}}"
+              ],
+              "path": [
+                "rooms",
+                "available"
+              ],
+              "query": [
+                {
+                  "key": "checkIn",
+                  "value": "{{stayIn}}"
+                },
+                {
+                  "key": "checkOut",
+                  "value": "{{stayOut}}"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Lists rooms to choose\", () => pm.expect(pm.response.text()).to.include(\"Choose\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Choosing a room needs login → redirect",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{webUrl}}/book/204?checkIn={{stayIn}}&checkOut={{stayOut}}",
+              "host": [
+                "{{webUrl}}"
+              ],
+              "path": [
+                "book",
+                "204"
+              ],
+              "query": [
+                {
+                  "key": "checkIn",
+                  "value": "{{stayIn}}"
+                },
+                {
+                  "key": "checkOut",
+                  "value": "{{stayOut}}"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 302\", () => pm.response.to.have.status(302));",
+                  "pm.test(\"Redirects to the login page\", () => pm.expect(pm.response.headers.get(\"Location\")).to.include(\"/login\"));"
+                ]
+              }
+            }
+          ],
+          "protocolProfileBehavior": {
+            "followRedirects": false
+          }
+        },
+        {
+          "name": "Administration needs login → redirect",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{webUrl}}/admin",
+              "host": [
+                "{{webUrl}}"
+              ],
+              "path": [
+                "admin"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 302\", () => pm.response.to.have.status(302));",
+                  "pm.test(\"Redirects to the login page\", () => pm.expect(pm.response.headers.get(\"Location\")).to.include(\"/login\"));"
+                ]
+              }
+            }
+          ],
+          "protocolProfileBehavior": {
+            "followRedirects": false
+          }
+        },
+        {
+          "name": "Login page",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{webUrl}}/login",
+              "host": [
+                "{{webUrl}}"
+              ],
+              "path": [
+                "login"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Has a CSRF-protected form\", () => pm.expect(pm.response.text()).to.include(\"_csrf\"));"
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "auth": {
+        "type": "noauth"
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "runId",
+      "value": ""
+    },
+    {
+      "key": "stayIn",
+      "value": ""
+    },
+    {
+      "key": "stayOut",
+      "value": ""
+    },
+    {
+      "key": "overlapIn",
+      "value": ""
+    },
+    {
+      "key": "overlapOut",
+      "value": ""
+    },
+    {
+      "key": "nextIn",
+      "value": ""
+    },
+    {
+      "key": "nextOut",
+      "value": ""
+    },
+    {
+      "key": "pastIn",
+      "value": ""
+    },
+    {
+      "key": "pastOut",
+      "value": ""
+    },
+    {
+      "key": "tooLongOut",
+      "value": ""
+    },
+    {
+      "key": "guestUsername",
+      "value": ""
+    },
+    {
+      "key": "otherUsername",
+      "value": ""
+    },
+    {
+      "key": "guestName",
+      "value": ""
+    },
+    {
+      "key": "guestId",
+      "value": ""
+    },
+    {
+      "key": "otherGuestId",
+      "value": ""
+    },
+    {
+      "key": "reservationId",
+      "value": ""
+    },
+    {
+      "key": "paymentReference",
+      "value": ""
+    },
+    {
+      "key": "cancelReservationId",
+      "value": ""
+    },
+    {
+      "key": "cancelPaymentReference",
+      "value": ""
+    },
+    {
+      "key": "adminCancelId",
+      "value": ""
+    },
+    {
+      "key": "transactionId",
+      "value": ""
+    }
+  ]
+}

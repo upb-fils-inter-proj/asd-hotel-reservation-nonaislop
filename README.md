@@ -5,25 +5,77 @@ A guest and administration web app in front of three Spring Boot microservices
 own PostgreSQL database. The code demonstrates six design patterns from the UML design:
 Strategy, Decorator, State, Observer, Adapter, and Facade.
 
-## Requirements
-- Docker with Compose, to run everything
-- JDK 21 and Maven 3.9, to build and test locally (IntelliJ's bundled Maven works)
+## Quick start
 
-## Run with Docker Compose
-
-Create the passwords once (they go to `secrets/`, which is git-ignored):
+From the repository root (Linux, macOS or WSL), with Docker running:
 
 ```bash
 ./scripts/generate-secrets.sh
 ```
 
-Build and start everything:
-
 ```bash
-docker compose up --build
+docker compose up --build -d
 ```
 
-Open the web app at **http://localhost:8090**.
+Open **http://localhost:8090**. Register as a guest to book, or log in as `admin` with the
+password in `secrets/admin_password.txt`.
+
+## Requirements
+- **Docker** (Engine 20.10+ or Docker Desktop) with **Compose v2** (`docker compose version`).
+  Nothing else is needed to run the system; the images build the code themselves.
+- Free ports **8080, 8081, 8082 and 8090** on the host.
+- Optional, to build and test outside Docker: JDK 21 and Maven 3.9 (IntelliJ's bundled Maven works).
+- Optional, to test the APIs: [Postman](https://www.postman.com/downloads/) (see "Testing with Postman").
+
+## Run with Docker Compose
+
+1. **Create the passwords** (once). This writes random passwords for the APIs, the three
+   databases and the admin account to `secrets/`, which is git-ignored:
+
+   ```bash
+   ./scripts/generate-secrets.sh
+   ```
+
+2. **Build the images and start all seven containers** (three databases, three services, the web
+   app). The first build downloads Maven dependencies and takes a few minutes; later builds are
+   quick:
+
+   ```bash
+   docker compose up --build -d
+   ```
+
+3. **Check that everything is up.** All containers should be `running` and the databases
+   `healthy` (services wait for their database before starting):
+
+   ```bash
+   docker compose ps
+   ```
+
+4. **Open the web app** at **http://localhost:8090**.
+
+5. **Watch the logs** (booking events, payments, notifications) if you like:
+
+   ```bash
+   docker compose logs -f hotel-management-service payment-service
+   ```
+
+6. **Stop** everything (data is kept in Docker volumes):
+
+   ```bash
+   docker compose down
+   ```
+
+   To also delete all data and start from empty databases, use `docker compose down -v`.
+
+**Troubleshooting**
+- `Cannot connect to the Docker daemon`: start Docker (`sudo systemctl start docker` on Linux, or
+  open Docker Desktop).
+- `port is already allocated`: another program uses 8080–8082 or 8090; stop it, or change the
+  left-hand port in `docker-compose.yml` (for example `"9090:8090"`).
+- `secrets/... not found` or a service exits saying a password is empty: run
+  `./scripts/generate-secrets.sh` again (existing passwords are kept).
+- After changing a database password you must also run `docker compose down -v`, because
+  PostgreSQL only reads its password when the database is first created.
 
 - **Guests** search availability by dates, then (after logging in or registering) pick a room,
   add extras, review the price and pay by card. They can cancel a confirmed reservation from
@@ -41,6 +93,59 @@ Open the web app at **http://localhost:8090**.
 | `hotel-db`, `shop-db`, `payment-db` | not published | One PostgreSQL database per service |
 
 Data is kept in Docker volumes. To start from empty databases: `docker compose down -v`.
+
+## Testing with Postman
+
+The `postman/` folder has a collection covering every feature (58 requests with test scripts,
+113 assertions):
+
+| Folder | Covers |
+|---|---|
+| 0. Setup | Picks fresh dates and usernames, so the collection can be run again and again |
+| 1. Accounts | Register (and duplicate / invalid), authenticate guest, wrong password, pre-created admin |
+| 2. Rooms and availability | Room list, availability by dates, past dates and stays over 30 nights refused |
+| 3. Booking and payment | Price quote, booking with a card, overlap refused, back-to-back stays, declined card (402), unknown guest, guest and admin lists, check-in, check-out |
+| 4. Cancellation and refunds | Guest cancels own booking (refund, dates freed), other guest refused, admin cancels |
+| 5. Shop service | Quotes with extras and the seasonal strategy, invalid request |
+| 6. Payment service | Every test card, Luhn and expiry checks, masked card, refunds |
+| 7. Security | Missing or wrong credentials, one service's credentials refused by another |
+| 8. Web app | Public pages, login required for booking and administration, CSRF-protected login form |
+
+1. Start the system (see above).
+2. Create an environment file with your passwords filled in (it is git-ignored):
+
+   ```bash
+   ./scripts/make-postman-env.sh
+   ```
+
+3. In Postman: **Import** `postman/hotel-reservation.postman_collection.json` and
+   `postman/hotel-reservation-local.with-secrets.postman_environment.json`, select the
+   environment **Hotel reservation (local) + secrets**, then run the collection with the
+   **Collection Runner** (keep the default order). Every request should be green.
+   (Alternatively import `postman/hotel-reservation-local.postman_environment.json` and paste the
+   four passwords from `secrets/*.txt` into it.)
+
+The same collection runs from the command line with Postman's CLI runner, Newman:
+
+```bash
+npx newman run postman/hotel-reservation.postman_collection.json -e postman/hotel-reservation-local.with-secrets.postman_environment.json
+```
+
+The full guest and admin click-through (forms with CSRF tokens) is best done in a browser at
+http://localhost:8090.
+
+## Run without Docker
+
+```bash
+mvn package
+```
+
+Start each jar with its passwords in the environment; each service also needs a PostgreSQL
+database (see the `*_DB_URL` settings in each `application.yml`). For example:
+
+```bash
+shop_api_password=$(cat secrets/shop_api_password.txt) shop_db_password=$(cat secrets/shop_db_password.txt) java -jar shop-service/target/shop-service.jar
+```
 
 ## Booking, availability and payments
 
