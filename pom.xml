@@ -27,6 +27,18 @@
     <properties>
         <java.version>21</java.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <paho-mqttv5.version>1.2.5</paho-mqttv5.version>
     </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <!-- MQTT 5 client for the messages between the services -->
+            <dependency>
+                <groupId>org.eclipse.paho</groupId>
+                <artifactId>org.eclipse.paho.mqttv5.client</artifactId>
+                <version>${paho-mqttv5.version}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
 
 </project>

@@ -28,12 +28,10 @@ admin:
   username: ${ADMIN_USERNAME:admin}
   password: ${admin_password:}
 
-services:
-  shop:
-    url: ${SHOP_SERVICE_URL:http://localhost:8081}
-    username: ${SHOP_API_USERNAME:shop-client}
-    password: ${shop_api_password:}
-  payment:
-    url: ${PAYMENT_SERVICE_URL:http://localhost:8082}
-    username: ${PAYMENT_API_USERNAME:payment-client}
-    password: ${payment_api_password:}
+messaging:
+  mqtt:
+    # The shop and payment services are reached through this MQTT broker (see docs/architecture.md).
+    url: ${MQTT_URL:tcp://localhost:1883}
+    username: ${MQTT_USERNAME:hotel-management}
+    password: ${mqtt_hotel_password:}
+    request-timeout: ${MQTT_REQUEST_TIMEOUT:10s}

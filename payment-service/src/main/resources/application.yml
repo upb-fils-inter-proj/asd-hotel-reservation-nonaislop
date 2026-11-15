@@ -21,3 +21,10 @@ api:
   auth:
     username: ${PAYMENT_API_USERNAME:payment-client}
     password: ${payment_api_password:}
+
+messaging:
+  mqtt:
+    # Charge and refund requests from the hotel management service arrive through this MQTT broker.
+    url: ${MQTT_URL:tcp://localhost:1883}
+    username: ${MQTT_USERNAME:payment}
+    password: ${mqtt_payment_password:}

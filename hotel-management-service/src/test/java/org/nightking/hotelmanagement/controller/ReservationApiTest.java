@@ -24,6 +24,7 @@ import org.nightking.hotelmanagement.gateway.PaymentGateway;
 import org.nightking.hotelmanagement.gateway.PaymentGateway.ChargeResult;
 import org.nightking.hotelmanagement.gateway.ShopGateway;
 import org.nightking.hotelmanagement.gateway.ShopGateway.StayQuote;
+import org.nightking.hotelmanagement.infrastructure.messaging.MqttTransport;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -37,11 +38,9 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
-/** The hotel management API on a real (H2) database with Flyway migrations; shop and payment are mocked. */
+/** The hotel management API on a real (H2) database with Flyway migrations; shop, payment and the MQTT broker are mocked. */
 @SpringBootTest(properties = {
         "hotel_api_password=test-secret",
-        "shop_api_password=unused",
-        "payment_api_password=unused",
         "admin_password=admin-secret"})
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
@@ -66,6 +65,9 @@ class ReservationApiTest {
 
     @MockitoBean
     private PaymentGateway payment;
+
+    @MockitoBean
+    private MqttTransport mqtt;
 
     @BeforeEach
     void stubOtherServices() {

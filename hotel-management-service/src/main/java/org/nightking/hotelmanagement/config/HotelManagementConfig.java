@@ -1,6 +1,9 @@
 package org.nightking.hotelmanagement.config;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Clock;
+import java.time.Duration;
+import java.util.UUID;
 import org.nightking.hotelmanagement.gateway.AccountRepository;
 import org.nightking.hotelmanagement.gateway.PasswordHasher;
 import org.nightking.hotelmanagement.gateway.PaymentGateway;
@@ -10,9 +13,14 @@ import org.nightking.hotelmanagement.gateway.ShopGateway;
 import org.nightking.hotelmanagement.infrastructure.AuditLogObserver;
 import org.nightking.hotelmanagement.infrastructure.BCryptPasswordHasher;
 import org.nightking.hotelmanagement.infrastructure.EmailNotifier;
-import org.nightking.hotelmanagement.infrastructure.PaymentServiceClient;
-import org.nightking.hotelmanagement.infrastructure.ShopServiceClient;
 import org.nightking.hotelmanagement.infrastructure.SmsNotifier;
+import org.nightking.hotelmanagement.infrastructure.messaging.MqttRequester;
+import org.nightking.hotelmanagement.infrastructure.messaging.MqttReservationEventPublisher;
+import org.nightking.hotelmanagement.infrastructure.messaging.MqttTopics;
+import org.nightking.hotelmanagement.infrastructure.messaging.MqttTransport;
+import org.nightking.hotelmanagement.infrastructure.messaging.PahoMqttTransport;
+import org.nightking.hotelmanagement.infrastructure.messaging.PaymentMqttClient;
+import org.nightking.hotelmanagement.infrastructure.messaging.ShopMqttClient;
 import org.nightking.hotelmanagement.infrastructure.persistence.AccountJpaRepository;
 import org.nightking.hotelmanagement.infrastructure.persistence.JpaAccountRepository;
 import org.nightking.hotelmanagement.infrastructure.persistence.JpaReservationRepository;
@@ -49,12 +57,14 @@ import org.springframework.boot.ApplicationRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.web.client.RestClient;
 
-/** Composition root of the hotel management service: plugs the database and HTTP adapters into the use cases. */
+/** Composition root of the hotel management service: plugs the database and MQTT adapters into the use cases. */
 @Configuration
 public class HotelManagementConfig {
     private static final Logger log = LoggerFactory.getLogger(HotelManagementConfig.class);
+
+    /** Names this running instance on the broker; its replies arrive on hotel-management/replies/{instanceId}. */
+    private final String instanceId = "hotel-management-" + UUID.randomUUID().toString().substring(0, 8);
 
     // --- gateways: the hotel database (PostgreSQL in Docker, H2 in tests)
 
@@ -86,31 +96,41 @@ public class HotelManagementConfig {
         return new BCryptPasswordHasher();
     }
 
-    // --- gateways: the other services, over HTTP
+    // --- gateways: the other services, over MQTT
 
     @Bean
-    ShopGateway shopGateway(RestClient.Builder builder,
-                            @Value("${services.shop.url}") String url,
-                            @Value("${services.shop.username}") String username,
-                            @Value("${services.shop.password}") String password) {
-        return new ShopServiceClient(builder.clone(), url, username, password);
+    MqttTransport mqttTransport(@Value("${messaging.mqtt.url}") String url,
+                                @Value("${messaging.mqtt.username}") String username,
+                                @Value("${messaging.mqtt.password}") String password) {
+        PahoMqttTransport transport = new PahoMqttTransport(url, instanceId, username, password);
+        transport.start();
+        return transport;
     }
 
     @Bean
-    PaymentGateway paymentGateway(RestClient.Builder builder,
-                                  @Value("${services.payment.url}") String url,
-                                  @Value("${services.payment.username}") String username,
-                                  @Value("${services.payment.password}") String password) {
-        return new PaymentServiceClient(builder.clone(), url, username, password);
+    MqttRequester mqttRequester(MqttTransport transport, ObjectMapper json,
+                                @Value("${messaging.mqtt.request-timeout}") Duration timeout) {
+        return new MqttRequester(transport, json, MqttTopics.REPLIES_PREFIX + instanceId, timeout);
     }
 
     @Bean
-    ReservationEventPublisher reservationEventPublisher() {
+    ShopGateway shopGateway(MqttRequester requester) {
+        return new ShopMqttClient(requester);
+    }
+
+    @Bean
+    PaymentGateway paymentGateway(MqttRequester requester) {
+        return new PaymentMqttClient(requester);
+    }
+
+    @Bean
+    ReservationEventPublisher reservationEventPublisher(MqttTransport transport, ObjectMapper json, Clock clock) {
         // Set up Observer subscribers.
         ReservationEventPublisher publisher = new ReservationEventPublisher();
         publisher.addObserver(new EmailNotifier());
         publisher.addObserver(new SmsNotifier());
         publisher.addObserver(new AuditLogObserver());
+        publisher.addObserver(new MqttReservationEventPublisher(transport, json, clock));
         return publisher;
     }
 

@@ -1,0 +1,19 @@
+# Who may publish (write) or subscribe (read) to which topics.
+# Requests go to the shop and payment services; their replies go to the response
+# topic the hotel management service names in each request (MQTT 5 request/response).
+
+user hotel-management
+topic write shop/quotes/request
+topic write payment/charges/request
+topic write payment/refunds/request
+topic read hotel-management/replies/#
+topic readwrite hotel/reservations/#
+
+user shop
+topic read shop/quotes/request
+topic write hotel-management/replies/#
+
+user payment
+topic read payment/charges/request
+topic read payment/refunds/request
+topic write hotel-management/replies/#

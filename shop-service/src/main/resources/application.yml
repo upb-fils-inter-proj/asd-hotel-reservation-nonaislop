@@ -21,3 +21,10 @@ api:
   auth:
     username: ${SHOP_API_USERNAME:shop-client}
     password: ${shop_api_password:}
+
+messaging:
+  mqtt:
+    # Quote requests from the hotel management service arrive through this MQTT broker.
+    url: ${MQTT_URL:tcp://localhost:1883}
+    username: ${MQTT_USERNAME:shop}
+    password: ${mqtt_shop_password:}

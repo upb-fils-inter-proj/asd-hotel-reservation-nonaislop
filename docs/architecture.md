@@ -2,27 +2,29 @@
 
 The system is split by business purpose. A web app serves guests and administrators; behind it,
 three services each own their business rules and their own PostgreSQL database. Each service is
-its own Maven module, Spring Boot application and Docker container. Services talk only over
-HTTP, through REST controllers, with HTTP Basic auth.
+its own Maven module, Spring Boot application and Docker container. The web app calls hotel
+management over HTTP (REST, HTTP Basic auth). Hotel management talks to the shop and payment
+services over **MQTT**, through a Mosquitto broker, using MQTT 5 request/response. Shop and
+payment also keep their REST APIs for direct testing.
 
 | Module | Business purpose | Entry point | Database |
 |---|---|---|---|
 | `web-app` | Guest and administration web interface | Thymeleaf pages on port 8090 | none |
 | `hotel-management-service` | Rooms, guest and admin accounts, reservations and their lifecycle, notifications | `/api/reservations`, `/api/rooms`, `/api/accounts` | `hotel` |
-| `shop-service` | Pricing strategies and the additional services price list | `/api/shop/quotes` | `shop` |
-| `payment-service` | Charging the guest and recording every payment | `/api/payments` | `payment` |
+| `shop-service` | Pricing strategies and the additional services price list | MQTT `shop/quotes/request`; `/api/shop/quotes` | `shop` |
+| `payment-service` | Charging the guest and recording every payment | MQTT `payment/charges/request`, `payment/refunds/request`; `/api/payments` | `payment` |
 
 Layers inside each service:
 
 | Layer | Holds | May depend on |
 |---|---|---|
-| `controller` | REST endpoints; creates a presenter per request and calls a use case | `usecase`, `model`, `presenter` |
-| `presenter` | Implements the use case's output port; builds the JSON view model and HTTP status | `usecase`, `model` |
+| `controller` | REST endpoints and MQTT message handlers; creates a presenter per request and calls a use case | `usecase`, `model`, `presenter` |
+| `presenter` | Implements the use case's output port; builds the JSON view model and the HTTP status (web presenters) or the reply status (message presenters) | `usecase`, `model` |
 | `model` | Request/response records crossing the use case boundary | `entity` (only to build responses) |
 | `usecase` | One interface per use case, its implementation (interactor), and its presenter interface (output port) | `entity`, `model`, `gateway` |
 | `entity` | Core business objects and rules | nothing outside `entity` |
 | `gateway` | Interfaces for what the use cases need from outside: repositories, other services, password hashing | `entity` |
-| `infrastructure` | Gateway implementations: the database (JPA), HTTP clients, external SDKs, notifiers | `gateway`, `entity`, `model` |
+| `infrastructure` | Gateway implementations: the database (JPA), the MQTT connection and clients, external SDKs, notifiers | `gateway`, `entity`, `model` |
 | `config` | Spring wiring (composition root) and security | everything in the service |
 
 `entity`, `model`, `gateway` and `usecase` contain no Spring, JPA or Jackson code. The web app
@@ -88,7 +90,11 @@ flowchart LR
 Solid arrows point in the direction of a dependency (inward, toward the entities). Dashed arrows
 mean "implements". Each database sits behind a gateway interface: the use cases only know
 `RoomRepository`, `ExtrasCatalog`, `PaymentRepository` and so on, and a JPA adapter in
-`infrastructure` plugs PostgreSQL in. The thick arrows are the only calls between processes.
+`infrastructure` plugs PostgreSQL in. MQTT is plugged in the same way: the use cases only know
+`ShopGateway` and `PaymentGateway`, and `ShopMqttClient` / `PaymentMqttClient` implement them.
+On the other side, a message controller (`ShopMessageController`, `PaymentMessageController`)
+calls the same use case as the REST controller, with a message presenter instead of a web
+presenter. The thick arrows are the only calls between processes.
 
 ```mermaid
 flowchart LR
@@ -109,7 +115,7 @@ flowchart LR
         hmU["<b>usecase</b><br/>BookRoom · CheckIn · CheckOut · ListReservations<br/>ListRooms · RegisterGuest · Authenticate · SeedAdmin"]
         hmE["<b>entity</b><br/>Reservation + lifecycle · Room · Account"]
         hmG["<b>gateway</b><br/>RoomRepository · ReservationRepository<br/>AccountRepository · PasswordHasher<br/>ShopGateway · PaymentGateway"]
-        hmI["<b>infrastructure</b><br/>JPA repositories · BCrypt<br/>ShopServiceClient · PaymentServiceClient"]
+        hmI["<b>infrastructure</b><br/>JPA repositories · BCrypt<br/>ShopMqttClient · PaymentMqttClient<br/>MqttReservationEventPublisher"]
         hmC --> hmU
         hmU --> hmE
         hmU --> hmG
@@ -118,7 +124,7 @@ flowchart LR
 
     subgraph SH["shop-service :8081"]
         direction TB
-        shC["<b>controller + presenter</b><br/>ShopController"]
+        shC["<b>controller + presenter</b><br/>ShopController (REST)<br/>ShopMessageController (MQTT)"]
         shU["<b>usecase</b><br/>QuoteStay"]
         shE["<b>entity</b><br/>pricing strategies · decorators · Extra"]
         shG["<b>gateway</b><br/>ExtrasCatalog"]
@@ -131,8 +137,8 @@ flowchart LR
 
     subgraph PA["payment-service :8082"]
         direction TB
-        paC["<b>controller + presenter</b><br/>PaymentController"]
-        paU["<b>usecase</b><br/>ProcessPayment"]
+        paC["<b>controller + presenter</b><br/>PaymentController (REST)<br/>PaymentMessageController (MQTT)"]
+        paU["<b>usecase</b><br/>ProcessPayment · RefundPayment"]
         paE["<b>entity</b><br/>Payment"]
         paG["<b>gateway</b><br/>PaymentProcessor · PaymentRepository"]
         paI["<b>infrastructure</b><br/>PayFlow adapter · JpaPaymentRepository"]
@@ -145,11 +151,15 @@ flowchart LR
     hdb[("hotel DB")]
     sdb[("shop DB")]
     pdb[("payment DB")]
+    mq{{"MQTT broker<br/>Mosquitto :1883"}}
 
     browser -- "form login<br/>session + CSRF" --> waC
     waI == "REST + Basic auth<br/>front-desk" ==> hmC
-    hmI == "POST /api/shop/quotes" ==> shC
-    hmI == "POST /api/payments" ==> paC
+    hmI == "shop/quotes/request<br/>payment/charges · refunds/request<br/>hotel/reservations/*" ==> mq
+    mq == "quote requests" ==> shC
+    mq == "charge + refund requests" ==> paC
+    shC -. "reply to hotel-management/replies/…" .-> mq
+    paC -. "reply to hotel-management/replies/…" .-> mq
     hmI --> hdb
     shI --> sdb
     paI --> pdb
@@ -166,6 +176,7 @@ sequenceDiagram
         participant BR as BookRoomInteractor
         participant HDB as hotel DB
     end
+    participant M as MQTT broker
     participant S as shop-service
     participant P as payment-service
 
@@ -176,32 +187,67 @@ sequenceDiagram
     W-->>G: session cookie, redirect to My reservations
     G->>W: search dates, choose room, pick extras
     W->>BR: GET /api/rooms/available, POST /api/reservations/quote
-    BR->>S: POST /api/shop/quotes
-    S-->>W: total + breakdown (prices from the shop DB)
+    BR->>M: publish shop/quotes/request (reply topic, correlation id)
+    M->>S: quote request
+    S-->>M: publish reply {status: OK, body: total + breakdown}
+    M-->>BR: reply (same correlation id)
+    BR-->>W: total + breakdown (prices from the shop DB)
     G->>W: POST /book/204/confirm (card) + CSRF token
     W->>BR: POST /api/reservations (guestId from the session, card)
     BR->>HDB: guest exists? dates valid? room free for those nights?
     BR->>HDB: save PENDING + hold room_nights (unique per room and night)
-    BR->>P: POST /api/payments (card)
+    BR->>M: publish payment/charges/request (card, reply topic, correlation id)
+    M->>P: charge request
     Note over P: validate card, charge via PayFlow adapter,<br/>store brand + last 4 only
     alt card approved
-        P-->>BR: 200 {status: APPROVED, transactionId}
+        P-->>M: reply {status: OK, body: {status: APPROVED, transactionId}}
+        M-->>BR: reply
         BR->>HDB: save CONFIRMED + payment reference
-        Note over BR: notify Email / SMS / Audit observers
+        Note over BR: notify Email / SMS / Audit / MQTT observers
+        BR->>M: publish hotel/reservations/confirmed
         BR-->>W: 201 reservation
         W-->>G: "Payment approved (Visa •••• 4242). Reservation confirmed."
     else card declined
-        P-->>BR: 200 {status: DECLINED, declineReason}
+        P-->>M: reply {status: OK, body: {status: DECLINED, declineReason}}
+        M-->>BR: reply
         BR->>HDB: save CANCELLED, release room_nights
         BR-->>W: 402 "Payment declined: Insufficient funds."
         W-->>G: back to review with the reason
     end
 ```
 
-## 4. Deployment with Docker Compose
+If no reply arrives within 10 seconds, the request fails; for a charge, the reservation is
+cancelled and its nights released, exactly as for a decline.
 
-Only the web app is meant for people; the service APIs are published for development. Databases
-are not published at all. Each container gets only the secrets it needs.
+## 4. Messages between the services (MQTT)
+
+| Topic | Publisher | Subscriber | Payload |
+|---|---|---|---|
+| `shop/quotes/request` | hotel management | shop (shared subscription `$share/shop-service/…`) | `{nightlyRate, nights, breakfast, spa, airportTransfer}` |
+| `payment/charges/request` | hotel management | payment (`$share/payment-service/…`) | `{reservationId, amount, card}` |
+| `payment/refunds/request` | hotel management | payment (`$share/payment-service/…`) | `{transactionId}` |
+| `hotel-management/replies/{instance}` | shop, payment | the hotel management instance that asked | `{status, body, error}` |
+| `hotel/reservations/{confirmed, cancelled, checked-in, checked-out}` | hotel management | any interested service | `{event, reservationId, guestId, roomNumber, checkIn, checkOut, totalPrice, state, occurredAt}` |
+
+- **Request/response:** MQTT 5's response topic and correlation data properties. Each hotel
+  management instance listens on its own reply topic and matches replies to waiting requests by
+  correlation id (`MqttRequester`); late or unknown replies are dropped.
+- **Reply status** replaces the HTTP status code: `OK`, `INVALID_REQUEST` (400), `NOT_FOUND`
+  (404), `REJECTED` (409), `ERROR` (500). A declined card is an `OK` reply whose body says
+  `DECLINED`, as with the REST API.
+- **QoS 1** (at least once) for every message. Shared subscriptions mean several copies of shop
+  or payment can run, and each request is handled by one of them.
+- **Security:** no anonymous clients; one login per service from Docker secrets; the broker's ACL
+  (`mqtt-broker/acl`) allows each login only the topics in the table above.
+- **Same use cases, two entry points:** `ShopMessageController` and `PaymentMessageController`
+  call the same use cases as the REST controllers, with a message presenter that builds the reply.
+  The MQTT connection itself (`PahoMqttTransport`, Eclipse Paho) is infrastructure behind a small
+  `MqttTransport` interface, so tests swap in an in-memory broker.
+
+## 5. Deployment with Docker Compose
+
+Only the web app is meant for people; the service APIs and the broker are published for
+development. Databases are not published at all. Each container gets only the secrets it needs.
 
 ```mermaid
 flowchart LR
@@ -214,11 +260,13 @@ flowchart LR
         hdb[("hotel-db")]
         sdb[("shop-db")]
         pdb[("payment-db")]
+        mq{{"mqtt-broker<br/>:1883"}}
     end
     browser --> wa
-    wa --> hm
-    hm --> sh
-    hm --> pa
+    wa -- HTTP --> hm
+    hm -- MQTT --> mq
+    sh -- MQTT --> mq
+    pa -- MQTT --> mq
     hm --> hdb
     sh --> sdb
     pa --> pdb
@@ -227,9 +275,10 @@ flowchart LR
 | Container | Secrets it receives |
 |---|---|
 | `web-app` | `hotel_api_password` (to call hotel management) |
-| `hotel-management-service` | `hotel_api_password`, `hotel_db_password`, `admin_password`, `shop_api_password`, `payment_api_password` |
-| `shop-service` | `shop_api_password`, `shop_db_password` |
-| `payment-service` | `payment_api_password`, `payment_db_password` |
+| `hotel-management-service` | `hotel_api_password`, `hotel_db_password`, `admin_password`, `mqtt_hotel_password` |
+| `shop-service` | `shop_api_password`, `shop_db_password`, `mqtt_shop_password` |
+| `payment-service` | `payment_api_password`, `payment_db_password`, `mqtt_payment_password` |
+| `mqtt-broker` | `mqtt_hotel_password`, `mqtt_shop_password`, `mqtt_payment_password` (hashed into its password file at startup) |
 | `hotel-db` / `shop-db` / `payment-db` | its own `*_db_password` |
 
 ## Databases and consistency
@@ -249,8 +298,8 @@ databases, and both are ordered so that a failure at any step leaves each databa
 
 - **Booking:** the reservation is saved as `PENDING` and holds its nights in the hotel database;
   then the payment service charges the card and records the payment. Approved → the reservation
-  becomes `CONFIRMED` and keeps the payment reference. Declined (or the payment service is
-  unreachable) → the reservation becomes `CANCELLED` and releases its nights.
+  becomes `CONFIRMED` and keeps the payment reference. Declined (or no reply from the payment
+  service in time) → the reservation becomes `CANCELLED` and releases its nights.
 - **Cancellation:** the refund is made first; the reservation is saved as `CANCELLED` only after
   the payment service confirms it.
 
@@ -262,7 +311,8 @@ reservation for any of the same nights violates the key, the adapter reports
 pass the availability check at the same moment.
 
 If more data ever has to be shared, the services would exchange events and accept eventual
-consistency rather than share a database.
+consistency rather than share a database. The `hotel/reservations/*` events are the start of
+that: any new service can subscribe to them without changing hotel management.
 
 ## Rules that keep the services independent
 
@@ -273,9 +323,11 @@ consistency rather than share a database.
    `infrastructure`; domain entities know nothing about persistence. The use-case tests run the
    same rules on in-memory gateways.
 3. **One database per service, no shared code.** Each service is a separate module with its own
-   schema; the hotel management clients keep their own copy of the shop and payment API shapes.
-4. **Every call is authenticated.** People log in to the web app; services call each other with
-   HTTP Basic credentials. All passwords are Docker secrets, never committed.
+   schema; the hotel management clients keep their own copy of the shop and payment message
+   shapes, and each service has its own small copy of the MQTT connection code.
+4. **Every call is authenticated.** People log in to the web app; the web app calls hotel
+   management with HTTP Basic credentials; services log in to the MQTT broker, which limits each
+   to its own topics. All passwords are Docker secrets, never committed.
 5. **`config` is the composition root.** It is the only place that knows every concrete class.
 
 ## Where every original class went

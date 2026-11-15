@@ -34,20 +34,19 @@ services:
     environment:
       HOTEL_DB_URL: jdbc:postgresql://hotel-db:5432/hotel
       HOTEL_DB_USERNAME: hotel
-      SHOP_SERVICE_URL: http://shop-service:8081
-      PAYMENT_SERVICE_URL: http://payment-service:8082
       HOTEL_API_USERNAME: front-desk
-      SHOP_API_USERNAME: shop-client
-      PAYMENT_API_USERNAME: payment-client
       ADMIN_USERNAME: admin
+      MQTT_URL: tcp://mqtt-broker:1883     # shop and payment are reached over MQTT
+      MQTT_USERNAME: hotel-management
     secrets:
       - hotel_db_password       # its own database
       - hotel_api_password      # its own API
       - admin_password          # the pre-created administrator
-      - shop_api_password       # to call the shop service
-      - payment_api_password    # to call the payment service
+      - mqtt_hotel_password     # its login on the MQTT broker
     depends_on:
       hotel-db:
+        condition: service_healthy
+      mqtt-broker:
         condition: service_healthy
       shop-service:
         condition: service_started
@@ -64,11 +63,16 @@ services:
       SHOP_DB_URL: jdbc:postgresql://shop-db:5432/shop
       SHOP_DB_USERNAME: shop
       SHOP_API_USERNAME: shop-client
+      MQTT_URL: tcp://mqtt-broker:1883
+      MQTT_USERNAME: shop
     secrets:
       - shop_db_password
-      - shop_api_password
+      - shop_api_password       # its HTTP API (Postman, debugging)
+      - mqtt_shop_password      # its login on the MQTT broker
     depends_on:
       shop-db:
+        condition: service_healthy
+      mqtt-broker:
         condition: service_healthy
 
   payment-service:
@@ -81,12 +85,36 @@ services:
       PAYMENT_DB_URL: jdbc:postgresql://payment-db:5432/payment
       PAYMENT_DB_USERNAME: payment
       PAYMENT_API_USERNAME: payment-client
+      MQTT_URL: tcp://mqtt-broker:1883
+      MQTT_USERNAME: payment
     secrets:
       - payment_db_password
-      - payment_api_password
+      - payment_api_password    # its HTTP API (Postman, debugging)
+      - mqtt_payment_password   # its login on the MQTT broker
     depends_on:
       payment-db:
         condition: service_healthy
+      mqtt-broker:
+        condition: service_healthy
+
+  # --- message broker: the services talk to each other over MQTT (see mqtt-broker/acl)
+  mqtt-broker:
+    build:
+      context: .
+      dockerfile: mqtt-broker/Dockerfile
+    ports:
+      - "1883:1883"
+    secrets:
+      - mqtt_hotel_password
+      - mqtt_shop_password
+      - mqtt_payment_password
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "1883"]
+      start_period: 30s
+      start_interval: 2s
+      interval: 60s
+      timeout: 5s
+      retries: 5
 
   # --- one database per service (not published on the host)
   hotel-db:
@@ -145,3 +173,9 @@ secrets:
     file: ./secrets/shop_db_password.txt
   payment_db_password:
     file: ./secrets/payment_db_password.txt
+  mqtt_hotel_password:
+    file: ./secrets/mqtt_hotel_password.txt
+  mqtt_shop_password:
+    file: ./secrets/mqtt_shop_password.txt
+  mqtt_payment_password:
+    file: ./secrets/mqtt_payment_password.txt
