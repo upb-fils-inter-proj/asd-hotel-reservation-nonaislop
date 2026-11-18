@@ -7,6 +7,9 @@ management over HTTP (REST, HTTP Basic auth). Hotel management talks to the shop
 services over **MQTT**, through a Mosquitto broker, using MQTT 5 request/response. Shop and
 payment also keep their REST APIs for direct testing.
 
+The same diagrams, as PlantUML sources with rendered SVG images, are in
+[diagrams/](../diagrams/README.md) at the repository root.
+
 | Module | Business purpose | Entry point | Database |
 |---|---|---|---|
 | `web-app` | Guest and administration web interface | Thymeleaf pages on port 8090 | none |

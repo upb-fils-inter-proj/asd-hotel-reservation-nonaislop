@@ -1,0 +1,54 @@
+@startuml services
+!pragma layout smetana
+
+title Hotel Reservation System - Services Diagram
+
+skinparam shadowing false
+skinparam defaultFontSize 13
+skinparam componentStyle rectangle
+skinparam ArrowColor #444444
+skinparam nodesep 50
+skinparam ranksep 60
+
+actor "Guest" as guest
+actor "Administrator" as admin
+actor "Postman / tester" as tester
+
+rectangle "web-app  :8090\nGuest and administration web interface\n(Thymeleaf, form login, sessions, CSRF)" as web #E8F1FB
+
+rectangle "hotel-management-service  :8080\nRooms · guest and admin accounts\nreservations and their lifecycle\navailability · notifications" as hotel #FFF4E0
+
+queue "mqtt-broker  :1883\nEclipse Mosquitto (MQTT 5)\nlogin per service + topic ACL" as broker #F0E8FB
+
+rectangle "shop-service  :8081\nPricing strategies\nadditional services (extras)" as shop #E8F8EC
+rectangle "payment-service  :8082\nCharge and refund cards\n(simulated PayFlow network)" as payment #FDECEC
+
+database "hotel DB\nPostgreSQL" as hoteldb
+database "shop DB\nPostgreSQL" as shopdb
+database "payment DB\nPostgreSQL" as paymentdb
+
+guest --> web : web pages (HTTP)
+admin --> web : web pages (HTTP)
+web --> hotel : REST + HTTP Basic\n/api/rooms · /api/reservations · /api/accounts
+
+hotel --> broker : publish requests\nshop/quotes/request\npayment/charges/request\npayment/refunds/request\n+ events hotel/reservations/*
+broker --> shop : quote requests
+broker --> payment : charge + refund requests
+shop ..> broker : reply to\nhotel-management/replies/{instance}
+payment ..> broker : reply to\nhotel-management/replies/{instance}
+
+hotel --> hoteldb : JPA + Flyway
+shop --> shopdb : JPA + Flyway
+payment --> paymentdb : JPA + Flyway
+
+tester ..> hotel : REST (testing)
+tester ..> shop : REST (testing)
+tester ..> payment : REST (testing)
+
+legend right
+  Solid arrows: calls made while the system runs
+  Dashed arrows: replies, and direct calls used for testing
+  Each service owns its database; no service reads another's
+end legend
+
+@enduml

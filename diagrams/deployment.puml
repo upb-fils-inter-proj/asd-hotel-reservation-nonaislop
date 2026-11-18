@@ -1,0 +1,40 @@
+@startuml deployment
+!pragma layout smetana
+
+title Deployment with Docker Compose (project hotel-reservation)
+
+skinparam shadowing false
+skinparam defaultFontSize 12
+skinparam ArrowColor #444444
+
+actor "Browser" as browser
+
+node "Docker host" {
+  node "web-app\nport 8090\nsecrets: hotel_api_password" as wa #E8F1FB
+  node "hotel-management-service\nport 8080\nsecrets: hotel_api_password, hotel_db_password,\nadmin_password, mqtt_hotel_password" as hm #FFF4E0
+  node "shop-service\nport 8081\nsecrets: shop_api_password, shop_db_password,\nmqtt_shop_password" as sh #E8F8EC
+  node "payment-service\nport 8082\nsecrets: payment_api_password, payment_db_password,\nmqtt_payment_password" as pa #FDECEC
+  node "mqtt-broker\nport 1883\nsecrets: mqtt_hotel_password, mqtt_shop_password,\nmqtt_payment_password (hashed at startup)" as mq #F0E8FB
+  database "hotel-db\npostgres:16-alpine\nnot published" as hdb
+  database "shop-db\npostgres:16-alpine\nnot published" as sdb
+  database "payment-db\npostgres:16-alpine\nnot published" as pdb
+  folder "secrets/ (git-ignored)\ncreated by scripts/generate-secrets.sh\neach file mounted only into the containers\nlisted with it, at /run/secrets/<name>" as secrets
+}
+
+browser --> wa : http://localhost:8090
+wa --> hm : HTTP
+hm --> mq : MQTT
+sh --> mq : MQTT
+pa --> mq : MQTT
+hm --> hdb : JDBC
+sh --> sdb : JDBC
+pa --> pdb : JDBC
+
+legend right
+  Each container receives only the secrets it needs,
+  mounted at /run/secrets/<name>.
+  Services wait for their database and the broker (healthchecks).
+  Data lives in the volumes hotel-data, shop-data, payment-data.
+end legend
+
+@enduml

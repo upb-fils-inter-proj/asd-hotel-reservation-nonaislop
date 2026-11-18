@@ -1,0 +1,47 @@
+@startuml mqtt-messaging
+!pragma layout smetana
+
+title MQTT Topics, Publishers, Subscribers and Permissions
+
+skinparam shadowing false
+skinparam defaultFontSize 12
+skinparam componentStyle rectangle
+skinparam ArrowColor #444444
+
+rectangle "hotel-management-service\nlogin: hotel-management" as hotel #FFF4E0
+rectangle "shop-service\nlogin: shop\nshared subscription $share/shop-service/..." as shop #E8F8EC
+rectangle "payment-service\nlogin: payment\nshared subscription $share/payment-service/..." as payment #FDECEC
+rectangle "any future service\n(notifications, reporting, ...)" as future #EEEEEE
+
+package "mqtt-broker (Mosquitto, MQTT 5, QoS 1, no anonymous clients)" #F0E8FB {
+  queue "shop/quotes/request\n{nightlyRate, nights, breakfast, spa, airportTransfer}" as tQuote
+  queue "payment/charges/request\n{reservationId, amount, card}" as tCharge
+  queue "payment/refunds/request\n{transactionId}" as tRefund
+  queue "hotel-management/replies/{instance}\n{status, body, error}" as tReply
+  queue "hotel/reservations/{confirmed | cancelled | checked-in | checked-out}\n{event, reservationId, roomNumber, dates, total, state}" as tEvents
+}
+
+hotel --> tQuote : write
+hotel --> tCharge : write
+hotel --> tRefund : write
+hotel --> tEvents : write
+tReply --> hotel : read (own instance)
+
+tQuote --> shop : read
+shop --> tReply : write
+
+tCharge --> payment : read
+tRefund --> payment : read
+payment --> tReply : write
+
+tEvents ..> future : read (would need an ACL entry)
+
+legend right
+  Request/response with MQTT 5 properties:
+  each request carries a response topic and a correlation id;
+  the reply goes to that topic with the same id.
+  Reply status: OK, INVALID_REQUEST, NOT_FOUND, REJECTED, ERROR.
+  Every arrow is allowed by mqtt-broker/acl; anything else is refused.
+end legend
+
+@enduml

@@ -1,0 +1,76 @@
+@startuml clean-architecture
+!pragma layout smetana
+
+title Clean Architecture Inside Each Service (the database and MQTT are plugins)
+
+skinparam shadowing false
+skinparam defaultFontSize 12
+skinparam componentStyle rectangle
+skinparam packageStyle rectangle
+skinparam ArrowColor #444444
+
+package "web-app" #E8F1FB {
+  rectangle "controller\npages · login · registration\nguest + admin pages" as waC
+  rectangle "gateway\nHotelManagementGateway" as waG
+  rectangle "infrastructure\nHotelManagementClient (REST)" as waI
+  waC --> waG
+  waI ..|> waG
+}
+
+package "hotel-management-service" #FFF4E0 {
+  rectangle "controller + presenter\nFrontDeskController (Facade)\nRoomController · AccountController" as hmC
+  rectangle "usecase\nBookRoom · QuoteBooking · CancelReservation\nCheckIn · CheckOut · SearchAvailableRooms\nListRooms · ListReservations\nRegisterGuest · Authenticate · SeedAdmin" as hmU
+  rectangle "entity\nReservation + lifecycle states (State)\nRoom · Guest · Account · StayPolicy" as hmE
+  rectangle "gateway\nRoomRepository · ReservationRepository\nAccountRepository · PasswordHasher\nShopGateway · PaymentGateway\nReservationObserver (Observer)" as hmG
+  rectangle "infrastructure\nJPA repositories · BCrypt\nShopMqttClient · PaymentMqttClient\nMqttReservationEventPublisher\nEmail / SMS / Audit notifiers" as hmI
+  hmC --> hmU
+  hmU --> hmE
+  hmU --> hmG
+  hmI ..|> hmG
+}
+
+package "shop-service" #E8F8EC {
+  rectangle "controller + presenter\nShopController (REST)\nShopMessageController (MQTT)" as shC
+  rectangle "usecase\nQuoteStay" as shU
+  rectangle "entity\npricing strategies (Strategy)\ncharge decorators (Decorator) · Extra" as shE
+  rectangle "gateway\nExtrasCatalog" as shG
+  rectangle "infrastructure\nJpaExtrasCatalog\nPahoMqttTransport · MqttResponder" as shI
+  shC --> shU
+  shU --> shE
+  shU --> shG
+  shI ..|> shG
+}
+
+package "payment-service" #FDECEC {
+  rectangle "controller + presenter\nPaymentController (REST)\nPaymentMessageController (MQTT)" as paC
+  rectangle "usecase\nProcessPayment · RefundPayment" as paU
+  rectangle "entity\nPayment · PaymentCard" as paE
+  rectangle "gateway\nPaymentProcessor · PaymentRepository" as paG
+  rectangle "infrastructure\nPayFlowGatewayAdapter (Adapter)\nJpaPaymentRepository\nPahoMqttTransport · MqttResponder" as paI
+  paC --> paU
+  paU --> paE
+  paU --> paG
+  paI ..|> paG
+}
+
+queue "MQTT broker" as mq
+database "hotel DB" as hdb
+database "shop DB" as sdb
+database "payment DB" as pdb
+
+waI ==> hmC : REST + Basic auth
+hmI ==> mq : requests + events
+mq ==> shC : quote requests
+mq ==> paC : charge / refund requests
+hmI --> hdb
+shI --> sdb
+paI --> pdb
+
+legend right
+  Solid arrows point inward (dependency direction)
+  Dashed arrows: "implements"
+  Thick arrows: the only calls between processes
+  entity, model, gateway, usecase: no Spring, JPA or Jackson
+end legend
+
+@enduml

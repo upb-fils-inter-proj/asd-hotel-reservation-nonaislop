@@ -1,0 +1,60 @@
+@startuml booking-sequence
+
+title A Guest Books a Room (web app -> hotel management -> MQTT -> shop and payment)
+
+skinparam shadowing false
+skinparam defaultFontSize 12
+autonumber
+
+actor "Guest\n(browser)" as G
+participant "web-app" as W
+box "hotel-management-service" #FFF4E0
+  participant "BookRoomInteractor" as BR
+  database "hotel DB" as HDB
+end box
+queue "MQTT broker" as M
+participant "shop-service" as S
+participant "payment-service" as P
+
+G -> W : POST /login (username, password)
+W -> BR : POST /api/accounts/authenticate
+note right of BR : AuthenticateInteractor checks\nthe bcrypt hash in the hotel DB
+BR --> W : 200 account (role GUEST)
+W --> G : session cookie
+
+G -> W : search dates, choose room, pick extras
+W -> BR : GET /api/rooms/available\nPOST /api/reservations/quote
+BR -> M : publish shop/quotes/request\n(reply topic, correlation id)
+M -> S : quote request
+S --> M : reply {status: OK, body: total + breakdown}
+M --> BR : reply (same correlation id)
+BR --> W : total + breakdown
+
+G -> W : POST /book/204/confirm (card + CSRF token)
+W -> BR : POST /api/reservations\n(guestId from the session, card)
+BR -> HDB : guest exists? dates valid?\nroom free for those nights?
+BR -> HDB : save PENDING + hold room_nights\n(primary key per room and night)
+BR -> M : publish payment/charges/request (card)
+M -> P : charge request
+note right of P : validate card (Luhn, expiry, CVC)\ncharge via PayFlow adapter\nstore brand + last 4 digits only
+
+alt card approved
+  P --> M : reply {status: OK, body: {status: APPROVED, transactionId}}
+  M --> BR : reply
+  BR -> HDB : save CONFIRMED + payment reference
+  BR -> M : publish hotel/reservations/confirmed
+  note right of BR : Email / SMS / Audit / MQTT observers
+  BR --> W : 201 reservation
+  W --> G : "Payment approved. Reservation confirmed."
+else card declined
+  P --> M : reply {status: OK, body: {status: DECLINED, declineReason}}
+  M --> BR : reply
+  BR -> HDB : save CANCELLED, release room_nights
+  BR --> W : 402 "Payment declined: ..."
+  W --> G : back to review with the reason
+else no reply within 10 s
+  BR -> HDB : save CANCELLED, release room_nights
+  BR --> W : 500 error
+end
+
+@enduml

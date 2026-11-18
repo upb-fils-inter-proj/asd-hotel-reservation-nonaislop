@@ -3,7 +3,12 @@
 A guest and administration web app in front of three Spring Boot microservices
 (hotel management, shop, payment). Each service is built with clean architecture and owns its
 own PostgreSQL database. The services talk to each other over **MQTT** (a Mosquitto broker);
-each also keeps a REST API for the web app and for testing. The code demonstrates six design patterns from the UML design:
+each also keeps a REST API for the web app and for testing.
+
+![Services diagram](diagrams/services.svg)
+
+All diagrams (services, clean architecture, booking sequence, MQTT topics, deployment, code
+split) are in [diagrams/](diagrams/README.md). The code demonstrates six design patterns from the UML design:
 Strategy, Decorator, State, Observer, Adapter, and Facade.
 
 ## Quick start
@@ -294,7 +299,8 @@ Docker is needed.
 
 Each service is organised with clean architecture (`controller`, `presenter`, `model`, `usecase`,
 `entity`, `gateway`, `infrastructure`, `config`); the database is one more adapter in
-`infrastructure`. See [docs/architecture.md](docs/architecture.md) for diagrams and rules.
+`infrastructure`. See [docs/architecture.md](docs/architecture.md) for the rules and
+[diagrams/](diagrams/README.md) for the diagrams.
 
 ## What is intentionally simplified
 - The payment gateway is simulated; no real payment is taken.

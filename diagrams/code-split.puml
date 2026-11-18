@@ -1,0 +1,54 @@
+@startuml code-split
+!pragma layout smetana
+
+title How the Original Single Application Was Split into Services
+
+skinparam shadowing false
+skinparam defaultFontSize 12
+skinparam packageStyle rectangle
+skinparam ArrowColor #444444
+skinparam nodesep 25
+skinparam ranksep 90
+
+package "Before: one application (package hotel)" #EEEEEE {
+  rectangle "facade\nHotelFacade" as bFacade
+  rectangle "model\nGuest · Room · Reservation" as bModel
+  rectangle "state\nreservation lifecycle" as bState
+  rectangle "notification\nobservers" as bNotify
+  rectangle "pricing · charges" as bPricing
+  rectangle "payment" as bPayment
+}
+
+package "hotel-management-service" #FFF4E0 {
+  rectangle "controller\nFrontDeskController" as hmC
+  rectangle "usecase\nBookRoom · CheckIn · CheckOut\nReservationEventPublisher" as hmU
+  rectangle "entity\nGuest · Room · Reservation\nlifecycle states" as hmE
+  rectangle "gateway\nReservationObserver" as hmG
+  rectangle "infrastructure\nEmail · SMS · Audit notifiers" as hmI
+}
+
+package "shop-service" #E8F8EC {
+  rectangle "usecase\nQuoteStay" as shU
+  rectangle "entity\npricing strategies\ncharge decorators" as shE
+}
+
+package "payment-service" #FDECEC {
+  rectangle "usecase\nProcessPayment" as paU
+  rectangle "gateway\nPaymentProcessor" as paG
+  rectangle "infrastructure\nPayFlowGateway + adapter" as paI
+}
+
+bFacade --> hmC : entry point
+bFacade --> hmU : booking flow
+bFacade --> shU : pricing + extras
+bModel --> hmE
+bState --> hmE
+bNotify --> hmG
+bNotify --> hmU
+bNotify --> hmI
+bPricing --> shE
+bPayment --> paU : PaymentService
+bPayment --> paG
+bPayment --> paI
+
+@enduml
